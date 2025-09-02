@@ -1,9 +1,10 @@
 'use client';
 // WeekGrid.tsx
 // Interactive 7 × 3 grid (days × time blocks) for Phase 1 demo.
-// Persists availability to localStorage and can POST to /api/availability.
+// Persists availability to localStorage and (if signed in) syncs with /api/availability.
 
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import {
   DAY_LABELS,
   ALL_TIME_BLOCKS,
@@ -13,12 +14,7 @@ import {
 
 // ---- Types ----
 
-type AvailabilityState = Record<
-  TimeBlockId,
-  // index by day 0..6 (Mon..Sun) -> boolean
-  boolean[]
->;
-
+type AvailabilityState = Record<TimeBlockId, boolean[]>;
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 // ---- Constants ----
@@ -37,10 +33,11 @@ function isAvailabilityState(v: unknown): v is AvailabilityState {
   if (!v || typeof v !== "object") return false;
   const obj = v as Record<string, unknown>;
   const keys: TimeBlockId[] = ["MORNING", "AFTERNOON", "EVENING"];
-  return keys.every((k) =>
-    Array.isArray(obj[k]) &&
-    (obj[k] as unknown[]).length === 7 &&
-    (obj[k] as unknown[]).every((x) => typeof x === "boolean")
+  return keys.every(
+    (k) =>
+      Array.isArray(obj[k]) &&
+      (obj[k] as unknown[]).length === 7 &&
+      (obj[k] as unknown[]).every((x) => typeof x === "boolean")
   );
 }
 
@@ -57,37 +54,54 @@ function loadFromStorage(): AvailabilityState {
 }
 
 function mondayOfCurrentWeekISO(): string {
-  // Get Monday of current week (Mon=0..Sun=6 here for ISO-like labeling)
   const now = new Date();
-  const day = (now.getDay() + 6) % 7; // convert Sun(0) to 6, Mon(1) to 0 ...
+  const day = (now.getDay() + 6) % 7; // Mon=0 .. Sun=6
   const monday = new Date(now);
   monday.setDate(now.getDate() - day);
   monday.setHours(0, 0, 0, 0);
   const yyyy = monday.getFullYear();
-  const mm = String(monday.getMonth() + 1).padStart(2, '0');
-  const dd = String(monday.getDate()).padStart(2, '0');
+  const mm = String(monday.getMonth() + 1).padStart(2, "0");
+  const dd = String(monday.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
 // ---- Component ----
 
 export default function WeekGrid() {
+  const { data: session, status } = useSession();
   const [state, setState] = useState<AvailabilityState>(createEmptyState());
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // On mount, hydrate from localStorage
+  // Hydrate from localStorage immediately
   useEffect(() => {
     setState(loadFromStorage());
   }, []);
 
-  // Persist whenever state changes
+  // If signed in, fetch server state for this week and merge (server takes precedence)
+  useEffect(() => {
+    const fetchServer = async () => {
+      if (status !== "authenticated") return;
+      try {
+        const res = await fetch(`/api/availability?week=${mondayOfCurrentWeekISO()}`, { cache: "no-store" });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.availability && isAvailabilityState(json.availability)) {
+            setState(json.availability);
+          }
+        }
+      } catch {
+        // ignore fetch errors for now
+      }
+    };
+    fetchServer();
+  }, [status]);
+
+  // Always persist to localStorage on state change
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      // ignore storage errors for now
-    }
+    } catch {}
   }, [state]);
 
   const toggle = (dayIndex: number, blockId: TimeBlockId) => {
@@ -119,7 +133,6 @@ export default function WeekGrid() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await res.json();
       setSaveStatus('saved');
-      // Reset "saved" badge after a short delay
       setTimeout(() => setSaveStatus('idle'), 1500);
     } catch (e: unknown) {
       setSaveStatus('error');
@@ -144,8 +157,9 @@ export default function WeekGrid() {
           <button
             type="button"
             onClick={saveToServer}
-            disabled={saveStatus === 'saving'}
+            disabled={saveStatus === 'saving' || status !== "authenticated"}
             className="rounded border px-3 py-1 text-xs bg-black text-white disabled:opacity-60"
+            title={status !== "authenticated" ? "Sign in to save to server" : "Save to database"}
           >
             {saveStatus === 'saving' ? 'Saving…' : 'Save to server'}
           </button>
@@ -165,10 +179,7 @@ export default function WeekGrid() {
               Time Block
             </th>
             {DAY_LABELS.map((day) => (
-              <th
-                key={day}
-                className="p-3 text-left font-semibold border-b border-gray-300"
-              >
+              <th key={day} className="p-3 text-left font-semibold border-b border-gray-300">
                 {day}
               </th>
             ))}
@@ -184,10 +195,7 @@ export default function WeekGrid() {
               {DAY_LABELS.map((_, dayIdx) => {
                 const isOn = state[block.id][dayIdx];
                 return (
-                  <td
-                    key={`${dayIdx}-${block.id}`}
-                    className="p-3 align-top border-b border-gray-200"
-                  >
+                  <td key={`${dayIdx}-${block.id}`} className="p-3 align-top border-b border-gray-200">
                     <button
                       type="button"
                       aria-pressed={isOn}
@@ -198,11 +206,7 @@ export default function WeekGrid() {
                           ? "bg-green-100 border-green-400 text-green-700"
                           : "border-dashed border-gray-300 hover:border-gray-400",
                       ].join(" ")}
-                      title={
-                        isOn
-                          ? "Click to mark unavailable"
-                          : "Click to mark available"
-                      }
+                      title={isOn ? "Click to mark unavailable" : "Click to mark available"}
                     >
                       {isOn ? "Available" : "—"}
                     </button>

@@ -1,0 +1,38 @@
+// prisma/schema.prisma
+// Prisma schema for scheduling app MVP
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A user authenticated via Google OAuth
+model User {
+  id           String         @id @default(cuid())
+  email        String         @unique
+  name         String?
+  availability Availability[]
+}
+
+// Represents a Monday-start week (e.g., "2025-09-01")
+model Week {
+  id           String         @id @default(cuid())
+  startMonday  DateTime       @unique
+  availability Availability[]
+}
+
+// Staff availability for one block on one week
+model Availability {
+  id        String  @id @default(cuid())
+  user      User    @relation(fields: [userId], references: [id])
+  userId    String
+  week      Week    @relation(fields: [weekId], references: [id])
+  weekId    String
+  blockId   String  // "MORNING" | "AFTERNOON" | "EVENING"
+  dayIndex  Int     // 0 = Mon ... 6 = Sun
+  available Boolean
+}
