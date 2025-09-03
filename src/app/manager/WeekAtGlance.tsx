@@ -1,7 +1,9 @@
 'use client';
 // WeekAtGlance.tsx — manager view with deadline badge colors + simple picker button.
+// Adds a small link to the new Assign Shifts page.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   DAY_LABELS,
   ALL_TIME_BLOCKS,
@@ -180,7 +182,12 @@ export default function WeekAtGlance() {
     <section className="surface" style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
         <div>
-          <h2 className="text-lg" style={{ fontWeight: 600, marginBottom: 4 }}>Week at a Glance</h2>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <h2 className="text-lg" style={{ fontWeight: 600, marginBottom: 4 }}>Week at a Glance</h2>
+            <Link href="/manager/assign" className="btn btn-quiet" title="Assign Front Desk & Facilitator">
+              Assign shifts →
+            </Link>
+          </div>
           <p style={{ color: "var(--muted-2)", fontSize: 13, marginBottom: 8 }}>
             Week starting: <span style={{ color: "var(--fg)" }}>{weekISO}</span>
           </p>

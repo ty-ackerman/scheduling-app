@@ -1,5 +1,5 @@
 // prisma/schema.prisma
-// Adds Week.lockAt and ensures updatedAt has a default for backfilling existing rows.
+// Adds Week.lockAt, default(now()) on updatedAt, and Assignment model for manager shift assignments.
 
 generator client {
   provider = "prisma-client-js"
@@ -23,6 +23,11 @@ enum TimeBlock {
   EVENING
 }
 
+enum ShiftRole {
+  FRONT_DESK
+  FACILITATOR
+}
+
 // ---------- Models ----------
 
 model User {
@@ -32,9 +37,9 @@ model User {
   role  Role    @default(STAFF)
 
   availabilities Availability[]
+  assignments    Assignment[]   @relation("AssignmentUser")
 
   createdAt DateTime @default(now())
-  // IMPORTANT: provide a default so adding this column to existing rows succeeds
   updatedAt DateTime @default(now()) @updatedAt
 }
 
@@ -48,9 +53,9 @@ model Week {
   lockAt DateTime?
 
   availabilities Availability[]
+  assignments    Assignment[]
 
   createdAt DateTime @default(now())
-  // IMPORTANT: provide a default so adding this column to existing rows succeeds
   updatedAt DateTime @default(now()) @updatedAt
 }
 
@@ -75,4 +80,24 @@ model Availability {
   @@unique([userId, weekId, blockId, dayIndex])
   @@index([weekId])
   @@index([userId])
+}
+
+model Assignment {
+  id String @id @default(cuid())
+
+  weekId   String
+  dayIndex Int // 0..6 Mon..Sun
+  blockId  TimeBlock
+  role     ShiftRole // FRONT_DESK / FACILITATOR
+
+  assignedUserId String? // null if unfilled
+  assignedUser   User?   @relation("AssignmentUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  week           Week    @relation(fields: [weekId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([weekId, dayIndex, blockId, role])
+  @@index([weekId])
+  @@index([assignedUserId])
 }
