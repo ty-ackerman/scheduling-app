@@ -1,20 +1,27 @@
-'use client';
 // app/week/page.tsx
-// Static Week View page (7 × 3 grid) for Phase 1 demo.
-// Uses the WeekGrid component for rendering.
+// Protects /week: if not logged in, redirect to home page.
 
+import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth/next";
+import authOptions from "../../../auth.config";
 import WeekGrid from "@/components/WeekGrid";
 
-export default function WeekPage() {
+export default async function WeekPage() {
+  const session = await getServerSession(authOptions);
+
+  if (!session?.user) {
+    redirect("/"); // Not logged in → go to home
+  }
+
   return (
-    <section className="space-y-4">
-      <header>
-        <h2 className="text-lg font-semibold">Week View (Static)</h2>
-        <p className="text-gray-600 text-sm">
-          Days × Time Blocks (09:00–12:00, 12:00–17:00, 17:00–21:00)
-        </p>
-      </header>
+    <div className="surface" style={{ padding: 20 }}>
+      <h1 className="text-xl" style={{ fontWeight: 600, marginBottom: 12 }}>
+        Week View (Static)
+      </h1>
+      <p style={{ marginBottom: 16, color: "var(--muted-2)" }}>
+        Days × Time Blocks (09:00–12:00, 12:00–17:00, 17:00–21:00)
+      </p>
       <WeekGrid />
-    </section>
+    </div>
   );
 }

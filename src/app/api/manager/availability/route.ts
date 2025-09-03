@@ -1,9 +1,9 @@
 // app/api/manager/availability/route.ts
-// Returns all users' availability for the requested week (MANAGER only).
+// Manager-only: returns all users' availability + lock status for a given week.
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
-import authOptions from "../../../../../auth.config";
+import authOptions from "@/../auth.config";
 import { prisma } from "@/lib/db";
 
 type TimeBlockId = "MORNING" | "AFTERNOON" | "EVENING";
@@ -12,10 +12,12 @@ const BLOCKS: TimeBlockId[] = ["MORNING", "AFTERNOON", "EVENING"];
 function isValidWeekISO(s: unknown): s is string {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
-
 function parseWeekStart(iso: string): Date {
   const [y, m, d] = iso.split("-").map((n) => parseInt(n, 10));
   return new Date(y, m - 1, d, 0, 0, 0, 0);
+}
+function isoOrNull(d: Date | null | undefined) {
+  return d ? new Date(d).toISOString() : null;
 }
 
 export async function GET(req: Request) {
@@ -35,14 +37,12 @@ export async function GET(req: Request) {
   }
   const weekStart = parseWeekStart(weekIso!);
 
-  // Ensure the week row exists (unique on startMonday in schema)
   const week = await prisma.week.upsert({
     where: { startMonday: weekStart },
     update: {},
     create: { startMonday: weekStart },
   });
 
-  // Pull all availability rows for this week, joined with user
   const rows = await prisma.availability.findMany({
     where: { weekId: week.id },
     select: {
@@ -53,7 +53,6 @@ export async function GET(req: Request) {
     },
   });
 
-  // Group by user
   const byUser = new Map<
     string,
     {
@@ -93,7 +92,6 @@ export async function GET(req: Request) {
     }
   }
 
-  // Build cell counts and name lists
   const counts: Record<TimeBlockId, number[]> = {
     MORNING: Array(7).fill(0),
     AFTERNOON: Array(7).fill(0),
@@ -117,11 +115,15 @@ export async function GET(req: Request) {
     }
   }
 
+  const isLocked = !!week.lockAt && Date.now() >= new Date(week.lockAt).getTime();
+
   return NextResponse.json({
     ok: true,
     week: weekIso,
     users: Array.from(byUser.values()),
     counts,
     names,
+    lockAt: isoOrNull(week.lockAt),
+    isLocked,
   });
 }

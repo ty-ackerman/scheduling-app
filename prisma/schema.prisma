@@ -1,43 +1,78 @@
 // prisma/schema.prisma
-// Prisma schema for scheduling app MVP
+// Adds Week.lockAt and ensures updatedAt has a default for backfilling existing rows.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "sqlite" // Phase 1: local SQLite; can swap later
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id           String         @id @default(cuid())
-  email        String         @unique
-  name         String?
-  role         Role           @default(STAFF)
-  availability Availability[]
-}
+// ---------- Enums ----------
 
 enum Role {
   STAFF
   MANAGER
 }
 
-// Represents a Monday-start week (e.g., "2025-09-01")
-model Week {
-  id           String         @id @default(cuid())
-  startMonday  DateTime       @unique
-  availability Availability[]
+enum TimeBlock {
+  MORNING
+  AFTERNOON
+  EVENING
 }
 
-// Staff availability for one block on one week
+// ---------- Models ----------
+
+model User {
+  id    String  @id @default(cuid())
+  email String  @unique
+  name  String?
+  role  Role    @default(STAFF)
+
+  availabilities Availability[]
+
+  createdAt DateTime @default(now())
+  // IMPORTANT: provide a default so adding this column to existing rows succeeds
+  updatedAt DateTime @default(now()) @updatedAt
+}
+
+model Week {
+  id String @id @default(cuid())
+
+  /// Start of the scheduling week (Monday at 00:00 local). Unique per week.
+  startMonday DateTime @unique
+
+  /// When edits become locked for staff. Null = unlocked.
+  lockAt DateTime?
+
+  availabilities Availability[]
+
+  createdAt DateTime @default(now())
+  // IMPORTANT: provide a default so adding this column to existing rows succeeds
+  updatedAt DateTime @default(now()) @updatedAt
+}
+
 model Availability {
-  id        String  @id @default(cuid())
-  user      User    @relation(fields: [userId], references: [id])
-  userId    String
-  week      Week    @relation(fields: [weekId], references: [id])
-  weekId    String
-  blockId   String  // "MORNING" | "AFTERNOON" | "EVENING"
-  dayIndex  Int     // 0 = Mon ... 6 = Sun
-  available Boolean
+  id String @id @default(cuid())
+
+  userId String
+  weekId String
+
+  /// Which time block in the day this record represents.
+  blockId TimeBlock
+
+  /// 0..6 for Mon..Sun
+  dayIndex Int
+
+  /// Whether the user is available for this cell.
+  available Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  week Week @relation(fields: [weekId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekId, blockId, dayIndex])
+  @@index([weekId])
+  @@index([userId])
 }

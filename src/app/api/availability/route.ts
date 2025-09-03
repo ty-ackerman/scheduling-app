@@ -1,12 +1,11 @@
 // app/api/availability/route.ts
-// Persist per-user weekly availability using Prisma + NextAuth v4.
+// Per-user availability GET/POST with weekly lock enforcement for STAFF.
+// MANAGER can always override.
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
-import authOptions from "../../../../auth.config";
+import authOptions from "@/../auth.config";
 import { prisma } from "@/lib/db";
-
-// ---- Types & utils ----
 
 type TimeBlockId = "MORNING" | "AFTERNOON" | "EVENING";
 const BLOCK_IDS: TimeBlockId[] = ["MORNING", "AFTERNOON", "EVENING"];
@@ -14,13 +13,11 @@ const BLOCK_IDS: TimeBlockId[] = ["MORNING", "AFTERNOON", "EVENING"];
 function isValidWeekISO(s: unknown): s is string {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
-
 function parseWeekStart(iso: string): Date {
   const [y, m, d] = iso.split("-").map((n) => parseInt(n, 10));
-  // Treat as local midnight; DST/timezones ignored per Phase 1
+  // Treat as local midnight; timezones/DST ignored per Phase 1
   return new Date(y, m - 1, d, 0, 0, 0, 0);
 }
-
 function isAvailabilityPayload(x: unknown): x is Record<TimeBlockId, boolean[]> {
   if (!x || typeof x !== "object") return false;
   const obj = x as Record<string, unknown>;
@@ -31,9 +28,11 @@ function isAvailabilityPayload(x: unknown): x is Record<TimeBlockId, boolean[]> 
       (obj[k] as unknown[]).every((v) => typeof v === "boolean")
   );
 }
+function isoOrNull(d: Date | null | undefined) {
+  return d ? new Date(d).toISOString() : null;
+}
 
 // ---- GET: /api/availability?week=YYYY-MM-DD ----
-
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
@@ -57,7 +56,7 @@ export async function GET(req: Request) {
     create: { email: session.user.email, name: session.user.name ?? null },
   });
 
-  // Ensure week (startMonday is UNIQUE in schema)
+  // Ensure/fetch week (startMonday is UNIQUE)
   const week = await prisma.week.upsert({
     where: { startMonday: weekStart },
     update: {},
@@ -74,7 +73,6 @@ export async function GET(req: Request) {
     AFTERNOON: Array(7).fill(false),
     EVENING: Array(7).fill(false),
   };
-
   for (const r of rows) {
     const block = r.blockId as TimeBlockId;
     if (BLOCK_IDS.includes(block) && r.dayIndex >= 0 && r.dayIndex <= 6) {
@@ -82,17 +80,25 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, week: weekIso, availability });
+  const isLocked = !!week.lockAt && Date.now() >= new Date(week.lockAt).getTime();
+
+  return NextResponse.json({
+    ok: true,
+    week: weekIso,
+    availability,
+    lockAt: isoOrNull(week.lockAt),
+    isLocked,
+  });
 }
 
 // ---- POST: /api/availability ----
 // Body: { week: 'YYYY-MM-DD', availability: { MORNING:[bool x7], AFTERNOON:[...], EVENING:[...] } }
-
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  const role = ((session.user as any)?.role ?? "STAFF") as "STAFF" | "MANAGER";
 
   let body: unknown;
   try {
@@ -130,6 +136,12 @@ export async function POST(req: Request) {
     update: {},
     create: { startMonday: weekStart },
   });
+
+  // Enforce lock for STAFF (MANAGER can override)
+  const locked = !!weekRec.lockAt && Date.now() >= new Date(weekRec.lockAt).getTime();
+  if (locked && role !== "MANAGER") {
+    return NextResponse.json({ ok: false, error: "Locked" }, { status: 403 });
+  }
 
   // Replace all rows for this user/week with incoming payload
   await prisma.availability.deleteMany({
