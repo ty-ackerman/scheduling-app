@@ -1,9 +1,5 @@
 'use client';
-// app/manager/page.tsx
-// Minimal Manager View for Phase 1 demo.
-// Reads the same localStorage availability as WeekGrid and lists “unfilled” cells
-// (cells where no availability is set). This is a placeholder heuristic until we
-// have real multi-user data and staffing requirements.
+// Manager View — matches minimalist styling
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -14,7 +10,6 @@ import {
 } from "@/lib/timeblocks";
 
 type AvailabilityState = Record<TimeBlockId, boolean[]>;
-
 const STORAGE_KEY = "availability:v1";
 
 function isAvailabilityState(v: unknown): v is AvailabilityState {
@@ -44,14 +39,11 @@ function loadFromStorage(): AvailabilityState | null {
 export default function ManagerPage() {
   const [state, setState] = useState<AvailabilityState | null>(null);
 
-  useEffect(() => {
-    setState(loadFromStorage());
-  }, []);
+  useEffect(() => { setState(loadFromStorage()); }, []);
 
   const unfilled = useMemo(() => {
     if (!state) return [];
-    const rows: { dayIdx: number; dayLabel: string; blockId: TimeBlockId; blockLabel: string }[] =
-      [];
+    const rows: { dayIdx: number; dayLabel: string; blockId: TimeBlockId; blockLabel: string }[] = [];
     for (const block of ALL_TIME_BLOCKS) {
       for (let dayIdx = 0; dayIdx < 7; dayIdx++) {
         const available = state[block.id][dayIdx];
@@ -69,69 +61,55 @@ export default function ManagerPage() {
   }, [state]);
 
   return (
-    <section className="space-y-4">
-      <header>
-        <h2 className="text-lg font-semibold">Manager View (Demo)</h2>
-        <p className="text-gray-600 text-sm">
-          Listing “unfilled” cells where availability is not set. This will
-          evolve into a multi-user, requirement-aware view in later steps.
-        </p>
-      </header>
+    <section className="surface" style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+        <div>
+          <h2 className="text-lg font-semibold" style={{ marginBottom: 4 }}>Manager View</h2>
+          <p style={{ color: "var(--muted)", fontSize: 13 }}>
+            Listing cells with no availability set. Will evolve to multi-user & requirements.
+          </p>
+        </div>
+        <a href="/week" className="btn btn-quiet">Go to Week View</a>
+      </div>
 
-      {/* If no local availability yet */}
       {!state && (
-        <div className="rounded border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900">
-          No local availability found. Go to{" "}
-          <a href="/week" className="underline">Week View</a> and toggle a few
-          cells, then return here.
+        <div className="surface" style={{ padding: 12, borderColor: "var(--border-strong)" }}>
+          <p style={{ fontSize: 13, color: "var(--muted)" }}>
+            No local availability found. Open <a href="/week" className="link">Week View</a> and toggle a few cells.
+          </p>
         </div>
       )}
 
-      {/* Summary */}
       {state && (
-        <div className="rounded border p-3 text-sm flex items-center justify-between">
-          <div>
-            Total cells: <span className="font-medium">{7 * ALL_TIME_BLOCKS.length}</span>
+        <>
+          <div className="surface" style={{ padding: 12, marginBottom: 12 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+              <div>Total cells: <strong>{7 * ALL_TIME_BLOCKS.length}</strong></div>
+              <div>Unfilled: <strong>{unfilled.length}</strong></div>
+              <div>Filled: <strong>{7 * ALL_TIME_BLOCKS.length - unfilled.length}</strong></div>
+            </div>
           </div>
-          <div>
-            Unfilled: <span className="font-medium">{unfilled.length}</span>
-          </div>
-          <div>
-            Filled:{" "}
-            <span className="font-medium">
-              {7 * ALL_TIME_BLOCKS.length - unfilled.length}
-            </span>
-          </div>
-        </div>
-      )}
 
-      {/* Unfilled list */}
-      {state && (
-        <div className="rounded border">
-          <div className="border-b p-3 font-medium">Unfilled</div>
-          {unfilled.length === 0 ? (
-            <div className="p-3 text-sm text-green-700">No unfilled cells 🎉</div>
-          ) : (
-            <ul className="divide-y">
-              {unfilled.map((row, i) => (
-                <li key={`${row.dayIdx}-${row.blockId}-${i}`} className="p-3 text-sm flex items-center justify-between">
-                  <div>
-                    <span className="font-medium">{row.dayLabel}</span>{" "}
-                    <span className="text-gray-600">·</span>{" "}
-                    <span>{row.blockLabel}</span>
-                  </div>
-                  <a
-                    href="/week"
-                    className="text-xs underline"
-                    title="Go to Week View to set availability"
-                  >
-                    set availability
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+          <div className="surface" style={{ overflow: "hidden" }}>
+            <div style={{ borderBottom: "1px solid var(--border)", padding: 12, fontWeight: 600 }}>Unfilled</div>
+            {unfilled.length === 0 ? (
+              <div style={{ padding: 12, color: "var(--ok-fg)" }}>No unfilled cells</div>
+            ) : (
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {unfilled.map((row, i) => (
+                  <li key={`${row.dayIdx}-${row.blockId}-${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 12, borderTop: "1px solid var(--border)" }}>
+                    <div>
+                      <span style={{ fontWeight: 600 }}>{row.dayLabel}</span>
+                      <span style={{ color: "var(--muted)", margin: "0 8px" }}>·</span>
+                      <span>{row.blockLabel}</span>
+                    </div>
+                    <a className="btn btn-quiet" href="/week" title="Set availability">Set</a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
       )}
     </section>
   );

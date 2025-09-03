@@ -22,30 +22,27 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <Providers>
-          <header className="bg-gray-100 border-b border-gray-300">
-            <div className="container mx-auto flex items-center justify-between p-4">
-              <Link href="/" className="text-xl font-bold">
+          <header className="app-header">
+            <div className="container app-header__inner">
+              <Link href="/" className="text-lg font-bold">
                 Scheduling App
               </Link>
               <nav className="flex items-center gap-4 text-sm">
-                <Link href="/week" className="underline hover:no-underline">
-                  Week View
-                </Link>
-                <Link href="/manager" className="underline hover:no-underline">
-                  Manager
-                </Link>
+                <Link href="/week" className="link">Week View</Link>
+                <Link href="/manager" className="link">Manager</Link>
                 <UserMenu />
               </nav>
             </div>
           </header>
-          <main className="container mx-auto p-6">{children}</main>
+
+          <main className="container" style={{ padding: "24px 16px" }}>
+            {children}
+          </main>
         </Providers>
       </body>
     </html>

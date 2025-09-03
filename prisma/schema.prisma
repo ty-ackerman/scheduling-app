@@ -10,12 +10,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// A user authenticated via Google OAuth
 model User {
   id           String         @id @default(cuid())
   email        String         @unique
   name         String?
+  role         Role           @default(STAFF)
   availability Availability[]
+}
+
+enum Role {
+  STAFF
+  MANAGER
 }
 
 // Represents a Monday-start week (e.g., "2025-09-01")

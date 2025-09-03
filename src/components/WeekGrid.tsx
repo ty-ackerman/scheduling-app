@@ -1,7 +1,6 @@
 'use client';
-// WeekGrid.tsx
-// Interactive 7 × 3 grid (days × time blocks) for Phase 1 demo.
-// Persists availability to localStorage and (if signed in) syncs with /api/availability.
+// WeekGrid.tsx — minimalist, high-contrast UI with clean cards and buttons.
+// Still: localStorage persistence + server sync when signed in.
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -12,16 +11,10 @@ import {
   type TimeBlockId,
 } from "@/lib/timeblocks";
 
-// ---- Types ----
-
 type AvailabilityState = Record<TimeBlockId, boolean[]>;
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
-// ---- Constants ----
-
 const STORAGE_KEY = "availability:v1";
-
-// ---- Helpers ----
 
 const createEmptyState = (): AvailabilityState => ({
   MORNING: Array(7).fill(false),
@@ -65,8 +58,6 @@ function mondayOfCurrentWeekISO(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// ---- Component ----
-
 export default function WeekGrid() {
   const { data: session, status } = useSession();
   const [state, setState] = useState<AvailabilityState>(createEmptyState());
@@ -74,9 +65,7 @@ export default function WeekGrid() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Hydrate from localStorage immediately
-  useEffect(() => {
-    setState(loadFromStorage());
-  }, []);
+  useEffect(() => { setState(loadFromStorage()); }, []);
 
   // If signed in, fetch server state for this week and merge (server takes precedence)
   useEffect(() => {
@@ -90,18 +79,14 @@ export default function WeekGrid() {
             setState(json.availability);
           }
         }
-      } catch {
-        // ignore fetch errors for now
-      }
+      } catch { /* ignore */ }
     };
     fetchServer();
   }, [status]);
 
   // Always persist to localStorage on state change
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
   }, [state]);
 
   const toggle = (dayIndex: number, blockId: TimeBlockId) => {
@@ -133,7 +118,7 @@ export default function WeekGrid() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await res.json();
       setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 1500);
+      setTimeout(() => setSaveStatus('idle'), 1400);
     } catch (e: unknown) {
       setSaveStatus('error');
       setErrorMsg(e instanceof Error ? e.message : 'Unknown error');
@@ -141,82 +126,72 @@ export default function WeekGrid() {
   };
 
   return (
-    <div className="overflow-x-auto">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="text-sm text-gray-600">
-          Week starting: <span className="font-medium">{mondayOfCurrentWeekISO()}</span>
+    <section className="surface" style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+        <div>
+          <h2 className="text-lg font-semibold" style={{ marginBottom: 4 }}>Week View</h2>
+          <p style={{ color: "var(--muted)", fontSize: 13 }}>
+            Days × Time Blocks (09:00–12:00, 12:00–17:00, 17:00–21:00)
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button className="btn btn-quiet" onClick={resetAll}>Reset all</button>
           <button
-            type="button"
-            className="rounded border px-3 py-1 text-xs hover:bg-gray-50"
-            onClick={resetAll}
-          >
-            Reset all
-          </button>
-          <button
-            type="button"
+            className="btn btn-primary"
             onClick={saveToServer}
             disabled={saveStatus === 'saving' || status !== "authenticated"}
-            className="rounded border px-3 py-1 text-xs bg-black text-white disabled:opacity-60"
             title={status !== "authenticated" ? "Sign in to save to server" : "Save to database"}
           >
-            {saveStatus === 'saving' ? 'Saving…' : 'Save to server'}
+            {saveStatus === 'saving' ? 'Saving…' : 'Save'}
           </button>
-          {saveStatus === 'saved' && (
-            <span className="text-xs text-green-700">Saved!</span>
-          )}
-          {saveStatus === 'error' && (
-            <span className="text-xs text-red-700">Error: {errorMsg}</span>
-          )}
         </div>
       </div>
 
-      <table className="min-w-full border-collapse text-sm">
-        <thead>
-          <tr>
-            <th className="sticky left-0 z-10 bg-white p-3 text-left font-semibold border-b border-gray-300">
-              Time Block
-            </th>
-            {DAY_LABELS.map((day) => (
-              <th key={day} className="p-3 text-left font-semibold border-b border-gray-300">
-                {day}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {ALL_TIME_BLOCKS.map((block) => (
-            <tr key={block.id} className="odd:bg-gray-50">
-              <th className="sticky left-0 z-10 bg-white p-3 text-left font-medium border-b border-gray-200 whitespace-nowrap">
-                {formatBlockLabel(block.id)}
-              </th>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ color: "var(--muted-2)", fontSize: 13 }}>
+          Week starting: <span style={{ color: "var(--fg)", fontWeight: 600 }}>{mondayOfCurrentWeekISO()}</span>
+        </div>
+        <div style={{ minHeight: 18 }}>
+          {saveStatus === 'saved' && <span style={{ color: "var(--ok-fg)", fontSize: 12 }}>Saved</span>}
+          {saveStatus === 'error' && <span style={{ color: "var(--warn-fg)", fontSize: 12 }}>Error: {errorMsg}</span>}
+        </div>
+      </div>
 
-              {DAY_LABELS.map((_, dayIdx) => {
-                const isOn = state[block.id][dayIdx];
-                return (
-                  <td key={`${dayIdx}-${block.id}`} className="p-3 align-top border-b border-gray-200">
-                    <button
-                      type="button"
-                      aria-pressed={isOn}
-                      onClick={() => toggle(dayIdx, block.id)}
-                      className={[
-                        "w-full h-10 rounded border text-xs transition-colors",
-                        isOn
-                          ? "bg-green-100 border-green-400 text-green-700"
-                          : "border-dashed border-gray-300 hover:border-gray-400",
-                      ].join(" ")}
-                      title={isOn ? "Click to mark unavailable" : "Click to mark available"}
-                    >
-                      {isOn ? "Available" : "—"}
-                    </button>
-                  </td>
-                );
-              })}
+      <div style={{ overflowX: "auto" }}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", minWidth: 140 }}>Time Block</th>
+              {DAY_LABELS.map((d) => (
+                <th key={d} style={{ textAlign: "left", minWidth: 80 }}>{d}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {ALL_TIME_BLOCKS.map((block) => (
+              <tr key={block.id}>
+                <th style={{ padding: 12, whiteSpace: "nowrap" }}>{formatBlockLabel(block.id)}</th>
+                {DAY_LABELS.map((_, dayIdx) => {
+                  const isOn = state[block.id][dayIdx];
+                  return (
+                    <td key={`${dayIdx}-${block.id}`}>
+                      <button
+                        type="button"
+                        aria-pressed={isOn}
+                        onClick={() => toggle(dayIdx, block.id)}
+                        className={`btn cell ${isOn ? "cell--on" : ""}`}
+                        title={isOn ? "Click to mark unavailable" : "Click to mark available"}
+                      >
+                        {isOn ? "Available" : "Set"}
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
