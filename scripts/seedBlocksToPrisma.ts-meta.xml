@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Metadata>
+    <Type>NodeScript</Type>
+    <Path>scripts/seedBlocksToPrisma.ts</Path>
+    <Description>Upsert day-specific Block rows from data/blocks.october.byDay.json into Prisma</Description>
+    <Version>1.0</Version>
+</Metadata>

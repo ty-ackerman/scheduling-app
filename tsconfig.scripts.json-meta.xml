@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Metadata>
+    <Type>TypeScriptConfig</Type>
+    <Path>tsconfig.scripts.json</Path>
+    <Description>CommonJS-only TS config for one-off Node scripts</Description>
+    <Version>1.0</Version>
+</Metadata>

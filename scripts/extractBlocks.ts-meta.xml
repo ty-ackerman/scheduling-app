@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Metadata>
+    <Type>NodeScript</Type>
+    <Path>scripts/extractBlocks.ts</Path>
+    <Description>Extract day-specific schedule blocks from CSV headers into
+        data/blocks.october.byDay.json</Description>
+    <Version>1.1</Version>
+</Metadata>

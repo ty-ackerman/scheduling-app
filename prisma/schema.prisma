@@ -1,12 +1,11 @@
 // prisma/schema.prisma
-// Adds Week.lockAt, default(now()) on updatedAt, and Assignment model for manager shift assignments.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite" // Phase 1: local SQLite; can swap later
+  provider = "sqlite" // current dev setup; swap later if needed
   url      = env("DATABASE_URL")
 }
 
@@ -17,6 +16,7 @@ enum Role {
   MANAGER
 }
 
+// Legacy 3-block enum is still here for now; we will migrate off it later.
 enum TimeBlock {
   MORNING
   AFTERNOON
@@ -26,6 +26,16 @@ enum TimeBlock {
 enum ShiftRole {
   FRONT_DESK
   FACILITATOR
+}
+
+enum Weekday {
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+  SUN
 }
 
 // ---------- Models ----------
@@ -65,10 +75,10 @@ model Availability {
   userId String
   weekId String
 
-  /// Which time block in the day this record represents.
+  /// Which time block in the day this record represents (legacy Phase 1).
   blockId TimeBlock
 
-  /// 0..6 for Mon..Sun
+  /// 0..6 for Mon..Sun (legacy alongside Weekday for now).
   dayIndex Int
 
   /// Whether the user is available for this cell.
@@ -82,11 +92,27 @@ model Availability {
   @@index([userId])
 }
 
+/// Day-specific block definition sourced from CSV.
+/// Unique per (day,startTime,endTime). App UIs should order by (day,startTime,endTime).
+model Block {
+  id        String  @id @default(cuid())
+  day       Weekday
+  label     String // e.g., "08:00–11:30"
+  startTime String // "HH:MM"
+  endTime   String // "HH:MM"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([day, startTime, endTime])
+  @@index([day, startTime])
+}
+
 model Assignment {
   id String @id @default(cuid())
 
   weekId   String
-  dayIndex Int // 0..6 Mon..Sun
+  dayIndex Int // 0..6 Mon..Sun (legacy alignment with Availability)
   blockId  TimeBlock
   role     ShiftRole // FRONT_DESK / FACILITATOR
 
