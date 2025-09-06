@@ -1,9 +1,6 @@
 'use client';
 // /manager/assign — Assign one Front Desk + one Facilitator per block.
-// - Grid shows two small slots per cell.
-// - Selecting a slot shows a right-side panel with candidates filtered by availability.
-// - Candidates sorted by lowest scheduled hours this week (helps balance).
-// - Assign or Clear updates immediately via API.
+// Adds live conflict hints: Back-to-Back, Close→Open, and weekly hours preview.
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -13,14 +10,15 @@ import {
   formatBlockLabel,
   type TimeBlockId,
 } from "@/lib/timeblocks";
+import {
+  type AssignMap,
+  type ShiftRole,
+  type TimeBlock,
+  BLOCK_HOURS,
+  predictAssignmentImpact,
+  totalHoursForUser,
+} from "@/lib/scheduling";
 
-type TimeBlock = "MORNING" | "AFTERNOON" | "EVENING";
-type ShiftRole = "FRONT_DESK" | "FACILITATOR";
-
-type AssignMap = Record<
-  string,
-  { role: ShiftRole; userId: string | null; name: string | null; email: string | null }
->;
 type HoursByUser = Record<string, number>;
 
 type CellInfo = {
@@ -61,6 +59,7 @@ function badge(text: string, tone: "ok" | "warn" | "quiet" = "ok") {
         background: styles.bg,
         color: styles.fg,
         borderColor: styles.border,
+        whiteSpace: "nowrap",
       }}
     >
       {text}
@@ -146,7 +145,7 @@ export default function AssignPage() {
         },
       }));
 
-      // Refresh sidebar candidates (hours may have changed)
+      // Also refresh sidebar (hours and candidates can change)
       await openCell(sel.dayIndex, sel.blockId, sel.role);
     } catch (e: any) {
       setErr(e?.message ?? "Failed to save assignment");
@@ -174,7 +173,7 @@ export default function AssignPage() {
       ) : err ? (
         <div style={{ color: "var(--warn-fg)" }}>Error: {err}</div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 16 }}>
           {/* Left: grid */}
           <div style={{ overflowX: "auto" }}>
             <table className="table">
@@ -251,9 +250,7 @@ export default function AssignPage() {
                   <div style={{ fontSize: 13, marginTop: 4 }}>
                     Current:{" "}
                     <span style={{ fontWeight: 600 }}>
-                      {readName(
-                        cellData.current[sel.role] ?? null
-                      )}
+                      {readName(cellData.current[sel.role] ?? null)}
                     </span>
                   </div>
                 </div>
@@ -274,34 +271,54 @@ export default function AssignPage() {
                   <div style={{ color: "var(--muted)" }}>No available candidates for this slot.</div>
                 ) : (
                   <ul style={{ display: "grid", gap: 8 }}>
-                    {cellData.candidates.map((c) => (
-                      <li key={c.id}>
-                        <div
-                          className="surface"
-                          style={{
-                            padding: 10,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: 8,
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontWeight: 600 }}>{c.name || c.email}</div>
-                            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                              Scheduled this week: {c.scheduledHours}h
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            onClick={() => submitAssign(c.id)}
+                    {cellData.candidates.map((c) => {
+                      // Compute conflict preview and projected hours using current local assignment state
+                      const { backToBack, closeToOpen, projectedHours } = predictAssignmentImpact(
+                        assignments,
+                        c.id,
+                        sel.dayIndex,
+                        sel.blockId
+                      );
+
+                      // Current scheduled (from local map) as a fallback if API's hoursByUser is stale
+                      const localHours = totalHoursForUser(assignments, c.id);
+                      const scheduledHours = Math.max(localHours, c.scheduledHours, hoursByUser[c.id] ?? 0);
+
+                      return (
+                        <li key={c.id}>
+                          <div
+                            className="surface"
+                            style={{
+                              padding: 10,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 8,
+                            }}
                           >
-                            Assign
-                          </button>
-                        </div>
-                      </li>
-                    ))}
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {c.name || c.email}
+                              </div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                                {badge(`Now: ${scheduledHours}h`, "quiet")}
+                                {badge(`+${BLOCK_HOURS[sel.blockId]}h → ${projectedHours}h`, "quiet")}
+                                {backToBack && badge("Back-to-back", "warn")}
+                                {closeToOpen && badge("Close→Open", "warn")}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              onClick={() => submitAssign(c.id)}
+                              title="Assign this person"
+                            >
+                              Assign
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
