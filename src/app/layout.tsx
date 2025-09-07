@@ -1,41 +1,45 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+// src/app/layout.tsx
 import "./globals.css";
-import Providers from "@/components/Providers";
-import HeaderNav from "@/components/HeaderNav";
+import Link from "next/link";
+import type { ReactNode } from "react";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-export const metadata: Metadata = {
+export const metadata = {
   title: "Scheduling App",
-  description: "Simple scheduling app Phase 1",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0b1220" },
-  ],
+  description: "Simple scheduling app",
+  // (avoids themeColor warning)
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <Providers>
-          {/* @ts-expect-error Async Server Component */}
-          <HeaderNav />
-          <main className="container" style={{ paddingTop: 24, paddingBottom: 24 }}>
-            {children}
-          </main>
-        </Providers>
+      <body>
+        <div className="navbar">
+          <div className="container nav-row">
+            <Link href="/" className="brand" aria-label="Home">
+              <span className="brand-dot" aria-hidden="true" />
+              Scheduling App
+            </Link>
+
+            <nav className="nav-links" aria-label="Primary">
+              <Link className="nav-link" href="/week-by-date?start=2025-10-06&days=7">
+                Week View
+              </Link>
+            </nav>
+
+            <div className="nav-right">
+              <span className="pill">
+                <span className="avatar">T</span>
+                <span>Tyler Ackerman</span>
+                <span className="role-chip">STAFF</span>
+              </span>
+              <button className="btn btn-quiet">Sign out</button>
+            </div>
+          </div>
+        </div>
+
+        <main className="container" style={{ paddingTop: 24, paddingBottom: 24 }}>
+          {children}
+        </main>
       </body>
     </html>
   );

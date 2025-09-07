@@ -235,3 +235,114 @@ button:focus-visible, a:focus-visible { outline: 2px solid #0ea5e9; outline-offs
   background: #047857; /* emerald-700 */
   border-color: #047857;
 }
+
+/* ==== Calendar Week Grid (no Tailwind) =================================== */
+
+.h1 { font-size: 28px; font-weight: 600; margin: 0 0 8px; }
+.muted { color: var(--muted); font-size: 13px; }
+.row-between { display: flex; align-items: center; justify-content: space-between; }
+
+.week {
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.week__header {
+  display: grid;
+  grid-template-columns: 80px repeat(7, 1fr);
+  background: color-mix(in oklab, var(--hover) 70%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+.week__timehead {
+  padding: 12px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.week__dayhead {
+  padding: 12px 12px;
+  font-size: 12px;
+  color: var(--fg);
+  text-align: center;
+}
+
+.week__body {
+  position: relative;
+  display: grid;
+  grid-template-columns: 80px repeat(7, 1fr);
+}
+
+/* Time gutter */
+.week__timecol {
+  border-right: 1px solid var(--border);
+  background: color-mix(in oklab, var(--hover) 40%, transparent);
+}
+.hour-row {
+  height: 64px; /* 1 hour */
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-right: 8px;
+  padding-top: 6px;
+}
+
+/* Day columns */
+.daycol {
+  position: relative;
+  border-right: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+}
+.hour-line {
+  height: 64px;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+}
+.hour-line--alt {
+  border-bottom-color: color-mix(in oklab, var(--border) 65%, transparent);
+}
+
+/* Blocks layer */
+.blocks {
+  position: absolute;
+  inset: 0;
+  padding: 0 8px;
+}
+
+/* Event blocks */
+.blk {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--card);
+  box-shadow:
+    0 1px 1px rgba(0,0,0,0.04),
+    0 6px 20px rgba(15, 23, 42, 0.08);
+  padding: 10px 12px;
+  overflow: hidden;
+}
+.blk--default {
+  background: color-mix(in oklab, #c2410c 14%, var(--card));
+  border-color: color-mix(in oklab, #c2410c 45%, var(--border-strong));
+  color: color-mix(in oklab, #fb923c 90%, var(--fg));
+}
+.blk--locked {
+  background: color-mix(in oklab, var(--hover) 35%, transparent);
+  border-color: color-mix(in oklab, var(--border-strong) 75%, transparent);
+  color: var(--fg);
+}
+
+.blk__time { font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.blk__label { margin-top: 4px; font-size: 11px; opacity: .9; }
+.blk__lock { margin-top: 4px; font-size: 10px; opacity: .75; }
+
+:root {
+  --grid-line: color-mix(in oklab, var(--border) 80%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --grid-line: color-mix(in oklab, var(--border) 70%, transparent);
+  }
+}

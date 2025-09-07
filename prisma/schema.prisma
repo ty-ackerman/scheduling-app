@@ -1,129 +1,38 @@
 // prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite" // current dev setup; swap later if needed
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
-// ---------- Enums ----------
-
-enum Role {
-  STAFF
-  MANAGER
-}
-
-// Legacy 3-block enum is still here for now; we will migrate off it later.
-enum TimeBlock {
-  MORNING
-  AFTERNOON
-  EVENING
-}
-
-enum ShiftRole {
-  FRONT_DESK
-  FACILITATOR
-}
-
-enum Weekday {
-  MON
-  TUE
-  WED
-  THU
-  FRI
-  SAT
-  SUN
-}
-
-// ---------- Models ----------
-
+/**
+ * Minimal user (kept if you already sign in)
+ */
 model User {
-  id    String  @id @default(cuid())
-  email String  @unique
-  name  String?
-  role  Role    @default(STAFF)
-
-  availabilities Availability[]
-  assignments    Assignment[]   @relation("AssignmentUser")
-
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  image     String?
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+  updatedAt DateTime @updatedAt
 }
 
-model Week {
-  id String @id @default(cuid())
-
-  /// Start of the scheduling week (Monday at 00:00 local). Unique per week.
-  startMonday DateTime @unique
-
-  /// When edits become locked for staff. Null = unlocked.
-  lockAt DateTime?
-
-  availabilities Availability[]
-  assignments    Assignment[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
-}
-
-model Availability {
-  id String @id @default(cuid())
-
-  userId String
-  weekId String
-
-  /// Which time block in the day this record represents (legacy Phase 1).
-  blockId TimeBlock
-
-  /// 0..6 for Mon..Sun (legacy alongside Weekday for now).
-  dayIndex Int
-
-  /// Whether the user is available for this cell.
-  available Boolean @default(false)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  week Week @relation(fields: [weekId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, weekId, blockId, dayIndex])
-  @@index([weekId])
-  @@index([userId])
-}
-
-/// Day-specific block definition sourced from CSV.
-/// Unique per (day,startTime,endTime). App UIs should order by (day,startTime,endTime).
+/**
+ * Weekly template block (recurs every week).
+ * day: 0=Mon … 6=Sun (Monday-start weeks, per our plan)
+ * startMin/endMin: minutes from 00:00
+ */
 model Block {
   id        String  @id @default(cuid())
-  day       Weekday
-  label     String // e.g., "08:00–11:30"
-  startTime String // "HH:MM"
-  endTime   String // "HH:MM"
+  day       Int                 // 1 = Mon … 7 = Sun
+  startMin  Int                 // minutes from 00:00
+  endMin    Int
+  label     String?             // e.g. "Morning", "Afternoon" (optional)
+  locked    Boolean @default(false)
+  isClass   Boolean @default(false)   // <-- NEW: columns that carry a CLASS tag
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
-
-  @@unique([day, startTime, endTime])
-  @@index([day, startTime])
-}
-
-model Assignment {
-  id String @id @default(cuid())
-
-  weekId   String
-  dayIndex Int // 0..6 Mon..Sun (legacy alignment with Availability)
-  blockId  TimeBlock
-  role     ShiftRole // FRONT_DESK / FACILITATOR
-
-  assignedUserId String? // null if unfilled
-  assignedUser   User?   @relation("AssignmentUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  week           Week    @relation(fields: [weekId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
-
-  @@unique([weekId, dayIndex, blockId, role])
-  @@index([weekId])
-  @@index([assignedUserId])
+  @@index([day, startMin])
 }

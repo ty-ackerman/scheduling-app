@@ -1,0 +1,198 @@
+[
+  {
+    "day": 1,
+    "startMin": 480,
+    "endMin": 720,
+    "label": "8AM–12PM",
+    "isClass": false
+  },
+  {
+    "day": 1,
+    "startMin": 480,
+    "endMin": 600,
+    "label": "8AM–10AM",
+    "isClass": false
+  },
+  {
+    "day": 1,
+    "startMin": 720,
+    "endMin": 900,
+    "label": "12PM–3PM",
+    "isClass": false
+  },
+  {
+    "day": 1,
+    "startMin": 900,
+    "endMin": 1080,
+    "label": "3PM–6PM",
+    "isClass": false
+  },
+  {
+    "day": 1,
+    "startMin": 1080,
+    "endMin": 1260,
+    "label": "6PM–9PM",
+    "isClass": false
+  },
+  {
+    "day": 2,
+    "startMin": 480,
+    "endMin": 600,
+    "label": "8AM–10AM",
+    "isClass": false
+  },
+  {
+    "day": 2,
+    "startMin": 900,
+    "endMin": 1050,
+    "label": "3PM–5:30PM",
+    "isClass": true
+  },
+  {
+    "day": 2,
+    "startMin": 1080,
+    "endMin": 1155,
+    "label": "6PM–7:15PM",
+    "isClass": true
+  },
+  {
+    "day": 2,
+    "startMin": 1170,
+    "endMin": 1260,
+    "label": "7:30PM–9PM",
+    "isClass": true
+  },
+  {
+    "day": 3,
+    "startMin": 480,
+    "endMin": 600,
+    "label": "8AM–10AM",
+    "isClass": false
+  },
+  {
+    "day": 3,
+    "startMin": 900,
+    "endMin": 1080,
+    "label": "3PM–6PM",
+    "isClass": false
+  },
+  {
+    "day": 3,
+    "startMin": 1080,
+    "endMin": 1260,
+    "label": "6PM–9PM",
+    "isClass": false
+  },
+  {
+    "day": 4,
+    "startMin": 420,
+    "endMin": 600,
+    "label": "7AM–10AM",
+    "isClass": false
+  },
+  {
+    "day": 4,
+    "startMin": 900,
+    "endMin": 1080,
+    "label": "3PM–6PM",
+    "isClass": false
+  },
+  {
+    "day": 4,
+    "startMin": 1080,
+    "endMin": 1260,
+    "label": "6PM–9PM",
+    "isClass": false
+  },
+  {
+    "day": 5,
+    "startMin": 480,
+    "endMin": 690,
+    "label": "8AM–11:30AM",
+    "isClass": false
+  },
+  {
+    "day": 5,
+    "startMin": 720,
+    "endMin": 900,
+    "label": "12PM–3PM",
+    "isClass": false
+  },
+  {
+    "day": 5,
+    "startMin": 900,
+    "endMin": 1080,
+    "label": "3PM–6PM",
+    "isClass": false
+  },
+  {
+    "day": 5,
+    "startMin": 1110,
+    "endMin": 1290,
+    "label": "6:30PM–9:30PM",
+    "isClass": false
+  },
+  {
+    "day": 6,
+    "startMin": 480,
+    "endMin": 660,
+    "label": "8AM–11AM",
+    "isClass": true
+  },
+  {
+    "day": 6,
+    "startMin": 690,
+    "endMin": 750,
+    "label": "11:30AM–12:30PM",
+    "isClass": true
+  },
+  {
+    "day": 6,
+    "startMin": 780,
+    "endMin": 1020,
+    "label": "1PM–5PM",
+    "isClass": false
+  },
+  {
+    "day": 6,
+    "startMin": 1050,
+    "endMin": 1290,
+    "label": "5:30PM–9:30PM",
+    "isClass": false
+  },
+  {
+    "day": 7,
+    "startMin": 480,
+    "endMin": 660,
+    "label": "8AM–11:00AM",
+    "isClass": false
+  },
+  {
+    "day": 7,
+    "startMin": 690,
+    "endMin": 750,
+    "label": "11:30AM–12:30PM",
+    "isClass": true
+  },
+  {
+    "day": 7,
+    "startMin": 780,
+    "endMin": 990,
+    "label": "1PM–4:30PM",
+    "isClass": true
+  },
+  {
+    "day": 7,
+    "startMin": 1020,
+    "endMin": 1080,
+    "label": "5PM–6PM",
+    "isClass": true
+  },
+  {
+    "day": 7,
+    "startMin": 1110,
+    "endMin": 1290,
+    "label": "6:30PM–9:30PM",
+    "isClass": false
+  }
+]
