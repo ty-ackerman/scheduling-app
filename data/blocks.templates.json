@@ -2,22 +2,8 @@
   {
     "day": 1,
     "startMin": 480,
-    "endMin": 720,
-    "label": "8AM–12PM",
-    "isClass": false
-  },
-  {
-    "day": 1,
-    "startMin": 480,
     "endMin": 600,
     "label": "8AM–10AM",
-    "isClass": false
-  },
-  {
-    "day": 1,
-    "startMin": 720,
-    "endMin": 900,
-    "label": "12PM–3PM",
     "isClass": false
   },
   {
@@ -46,7 +32,7 @@
     "startMin": 900,
     "endMin": 1050,
     "label": "3PM–5:30PM",
-    "isClass": true
+    "isClass": false
   },
   {
     "day": 2,
@@ -60,7 +46,7 @@
     "startMin": 1170,
     "endMin": 1260,
     "label": "7:30PM–9PM",
-    "isClass": true
+    "isClass": false
   },
   {
     "day": 3,
@@ -137,7 +123,7 @@
     "startMin": 480,
     "endMin": 660,
     "label": "8AM–11AM",
-    "isClass": true
+    "isClass": false
   },
   {
     "day": 6,
@@ -179,7 +165,7 @@
     "startMin": 780,
     "endMin": 990,
     "label": "1PM–4:30PM",
-    "isClass": true
+    "isClass": false
   },
   {
     "day": 7,
