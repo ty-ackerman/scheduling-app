@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DateTime } from "luxon";
 
 /** ----- Types from APIs ----- */
@@ -56,15 +56,26 @@ type DraftShape = {
   everyWeekIds: string[];
 };
 
-export default function StaffWeekCalendarWithLocalDraftAndSave() {
+export default function StaffWeekCalendarWithNav() {
   const qs = useSearchParams();
-  const startISO = qs.get("start") || "2025-10-06";
+  const router = useRouter();
+
+  // Read week start & days from URL
+  const startISOQuery = qs.get("start") || "";
   const daysParam = Math.max(1, Math.min(7, parseInt(qs.get("days") || "7", 10) || 7));
 
+  // Default to THIS Monday if not provided
+  const weekStartISO = useMemo(() => {
+    if (startISOQuery) return startISOQuery;
+    const monday = DateTime.local().startOf("week").plus({ days: 1 }); // Luxon week starts Sun
+    return monday.toISODate()!;
+  }, [startISOQuery]);
+
+  // Month string derived from the visible week’s Monday
   const monthStr = useMemo(() => {
-    const dt = DateTime.fromISO(startISO);
+    const dt = DateTime.fromISO(weekStartISO);
     return dt.isValid ? dt.toFormat("yyyy-LL") : "2025-10";
-  }, [startISO]);
+  }, [weekStartISO]);
 
   const [week, setWeek] = useState<WeekAPI | null>(null);
   const [availability, setAvailability] = useState<AvailabilityAPI | null>(null);
@@ -85,7 +96,7 @@ export default function StaffWeekCalendarWithLocalDraftAndSave() {
     (async () => {
       setErrorMsg(null);
       try {
-        const res = await fetch(`/api/blocks/week?start=${encodeURIComponent(startISO)}&days=${daysParam}`, { cache: "no-store" });
+        const res = await fetch(`/api/blocks/week?start=${encodeURIComponent(weekStartISO)}&days=${daysParam}`, { cache: "no-store" });
         if (!res.ok) {
           const t = await res.text();
           console.error("[staff/week] blocks fetch failed:", t);
@@ -100,7 +111,7 @@ export default function StaffWeekCalendarWithLocalDraftAndSave() {
       }
     })();
     return () => { alive = false; };
-  }, [startISO, daysParam]);
+  }, [weekStartISO, daysParam]);
 
   /** Load availability (server truth), hydrate from LS draft if present */
   useEffect(() => {
@@ -301,6 +312,23 @@ export default function StaffWeekCalendarWithLocalDraftAndSave() {
     }
   }
 
+  /** -------- Week navigation (URL driven) -------- */
+  function pushWeek(newStartISO: string) {
+    router.push(`/staff/week?start=${encodeURIComponent(newStartISO)}&days=${daysParam}`);
+  }
+  function goPrevWeek() {
+    const dt = DateTime.fromISO(weekStartISO).minus({ weeks: 1 });
+    pushWeek(dt.toISODate()!);
+  }
+  function goNextWeek() {
+    const dt = DateTime.fromISO(weekStartISO).plus({ weeks: 1 });
+    pushWeek(dt.toISODate()!);
+  }
+  function goThisWeek() {
+    const monday = DateTime.local().startOf("week").plus({ days: 1 });
+    pushWeek(monday.toISODate()!);
+  }
+
   return (
     <div>
       <div
@@ -317,11 +345,21 @@ export default function StaffWeekCalendarWithLocalDraftAndSave() {
         <div>
           <h1 style={{ margin: 0, fontWeight: 400, fontSize: 20 }}>My Availability — Week (Calendar)</h1>
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
-            Month: <strong>{monthStr}</strong>
+            Week of <strong>{weekStartISO}</strong> • Month scope: <strong>{monthStr}</strong>
           </div>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Week nav */}
+          <div className="pill" style={{ gap: 6 }}>
+            <button className="btn btn-quiet" onClick={goPrevWeek} title="Previous week">← Prev</button>
+            <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
+            <button className="btn btn-quiet" onClick={goThisWeek} title="Jump to this week">This week</button>
+            <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
+            <button className="btn btn-quiet" onClick={goNextWeek} title="Next week">Next →</button>
+          </div>
+
+          {/* Status pill */}
           {dirty ? (
             <span
               className="pill"
