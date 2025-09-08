@@ -39,7 +39,7 @@ function formatRange(startMin: number, endMin: number) {
 }
 
 /** ----- Component ----- */
-export default function StaffWeekCalendarReadOnly() {
+export default function StaffWeekCalendarToggleLocal() {
   const qs = useSearchParams();
   const startISO = qs.get("start") || "2025-10-06";
   const daysParam = Math.max(1, Math.min(7, parseInt(qs.get("days") || "7", 10) || 7));
@@ -52,6 +52,10 @@ export default function StaffWeekCalendarReadOnly() {
   const [week, setWeek] = useState<WeekAPI | null>(null);
   const [availability, setAvailability] = useState<AvailabilityAPI | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Local-only UI state (initialized from availability if present)
+  const [selectedLocal, setSelectedLocal] = useState<Set<string>>(new Set());
+  const [everyWeekLocal, setEveryWeekLocal] = useState<Set<string>>(new Set());
 
   /** Load week blocks */
   useEffect(() => {
@@ -76,7 +80,7 @@ export default function StaffWeekCalendarReadOnly() {
     return () => { alive = false; };
   }, [startISO, daysParam]);
 
-  /** Load availability read-only */
+  /** Load availability (read-only, then hydrate local toggles) */
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -85,33 +89,46 @@ export default function StaffWeekCalendarReadOnly() {
         if (!res.ok) {
           // 401 when signed out → show empty selection
           if (res.status === 401) {
-            if (alive) setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+            if (alive) {
+              setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+              setSelectedLocal(new Set());
+              setEveryWeekLocal(new Set());
+            }
             return;
           }
           const t = await res.text();
           console.warn("[staff/week calendar] availability fetch non-200:", res.status, t);
-          if (alive) setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+          if (alive) {
+            setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+            setSelectedLocal(new Set());
+            setEveryWeekLocal(new Set());
+          }
           return;
         }
         const data: AvailabilityAPI = await res.json();
-        if (alive) setAvailability(data);
+        if (alive) {
+          setAvailability(data);
+          setSelectedLocal(new Set(data.selections ?? []));
+          setEveryWeekLocal(new Set(data.everyWeekIds ?? []));
+        }
       } catch (e) {
         console.warn(e);
-        if (alive) setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+        if (alive) {
+          setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+          setSelectedLocal(new Set());
+          setEveryWeekLocal(new Set());
+        }
       }
     })();
     return () => { alive = false; };
   }, [monthStr]);
-
-  const selectedIds = useMemo(() => new Set(availability?.selections ?? []), [availability]);
-  const everyWeekIds = useMemo(() => new Set(availability?.everyWeekIds ?? []), [availability]);
 
   /** Build vertical time axis from all blocks in the week */
   const timeline = useMemo<number[]>(() => {
     if (!week) return [];
 
     const times = new Set<number>();
-    for (const d of week.days) {
+    for (const d of week?.days ?? []) {
       for (const b of d.blocks) {
         times.add(b.startMin);
         times.add(b.endMin);
@@ -130,13 +147,42 @@ export default function StaffWeekCalendarReadOnly() {
     return out;
   }, [week]);
 
+  /** Local-only interactions */
+  function toggleBlock(id: string, locked: boolean) {
+    if (locked) return;
+    setSelectedLocal(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+        // also clear everyWeek when unselecting
+        setEveryWeekLocal(prevEW => {
+          const ew = new Set(prevEW);
+          ew.delete(id);
+          return ew;
+        });
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function toggleEveryWeek(id: string) {
+    setEveryWeekLocal(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   return (
     <div>
       <div className="surface" style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <div>
           <h1 style={{ margin: 0, fontWeight: 400, fontSize: 20 }}>My Availability — Week (Calendar)</h1>
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
-            Month: <strong>{monthStr}</strong> • Read-only preview
+            Month: <strong>{monthStr}</strong> • Local preview (not saved)
           </div>
         </div>
       </div>
@@ -210,19 +256,26 @@ export default function StaffWeekCalendarReadOnly() {
                   {/* Absolute layer with blocks */}
                   <div style={{ position: "absolute", inset: 0, padding: "6px 8px" }}>
                     {d.blocks.map((b) => {
-                      // Positioning
-                      const topPx = ((b.startMin - firstTick) / HOUR_STEP_MIN) * 64 + 2; // +2 for visual breathing
+                      const topPx = ((b.startMin - firstTick) / HOUR_STEP_MIN) * 64 + 2; // +2 for breathing room
                       const heightPx = Math.max(24, ((b.endMin - b.startMin) / HOUR_STEP_MIN) * 64 - 8); // min height + spacing
-                      const isSelected = selectedIds.has(b.id);
-                      const everyWeek = everyWeekIds.has(b.id);
 
-                      // Colors: neutral blue for base, muted when locked
+                      const isSelected = selectedLocal.has(b.id);
+                      const isEvery = everyWeekLocal.has(b.id);
+
                       const baseBg = b.locked ? "rgba(148,163,184,0.20)" : "rgba(59,130,246,0.14)"; // gray/blue
                       const baseBorder = b.locked ? "rgba(148,163,184,0.55)" : "rgba(59,130,246,0.55)";
 
                       return (
-                        <div
+                        <button
                           key={b.id}
+                          type="button"
+                          disabled={b.locked}
+                          onClick={(e) => {
+                            // Ignore clicks from the inner "Every week" control
+                            const target = e.target as HTMLElement;
+                            if (target.closest("[data-ew-toggle]")) return;
+                            toggleBlock(b.id, b.locked);
+                          }}
                           className="surface"
                           style={{
                             position: "absolute",
@@ -239,6 +292,8 @@ export default function StaffWeekCalendarReadOnly() {
                             display: "flex",
                             flexDirection: "column",
                             gap: 6,
+                            cursor: b.locked ? "not-allowed" : "pointer",
+                            textAlign: "left",
                           }}
                           title={formatRange(b.startMin, b.endMin)}
                         >
@@ -249,8 +304,8 @@ export default function StaffWeekCalendarReadOnly() {
                             {b.locked ? <span style={{ marginLeft: 8, color: "var(--muted-2)", fontSize: 11 }}>(Locked)</span> : null}
                           </div>
 
-                          {/* Chips row */}
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {/* Chips + Every-week control */}
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                             {isSelected && (
                               <span
                                 style={{
@@ -265,22 +320,48 @@ export default function StaffWeekCalendarReadOnly() {
                                 Selected
                               </span>
                             )}
-                            {everyWeek && (
-                              <span
+
+                            {isSelected && (
+                              <label
+                                data-ew-toggle
+                                onClick={(e) => {
+                                  // Don’t let label click bubble to the block
+                                  e.stopPropagation();
+                                }}
                                 style={{
-                                  padding: "2px 8px",
-                                  borderRadius: 999,
-                                  color: "var(--ok-fg)",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
                                   fontSize: 11,
-                                  border: "1px solid color-mix(in oklab, var(--ok-fg) 65%, transparent)",
-                                  background: "transparent",
+                                  color: "var(--muted)",
+                                  cursor: "pointer",
+                                  userSelect: "none",
                                 }}
                               >
+                                <input
+                                  data-ew-toggle
+                                  type="checkbox"
+                                  checked={isEvery}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    toggleEveryWeek(b.id);
+                                  }}
+                                  onClick={(e) => {
+                                    // Prevent parent button click
+                                    e.stopPropagation();
+                                  }}
+                                  style={{ cursor: "pointer" }}
+                                  aria-label="Every week"
+                                />
                                 Every week
-                              </span>
+                              </label>
+                            )}
+
+                            {!isSelected && (
+                              <span style={{ fontSize: 11, color: "var(--muted-2)" }}>Tap to select</span>
                             )}
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
