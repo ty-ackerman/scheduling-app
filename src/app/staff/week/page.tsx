@@ -24,6 +24,8 @@ type AvailabilityAPI = {
   month: string;        // "YYYY-MM"
   selections: string[]; // blockIds
   everyWeekIds: string[];
+  // Optional user payload if your API returns it (our GET does):
+  user?: { id: string; email: string; name?: string | null };
 };
 
 /** ----- Helpers ----- */
@@ -38,8 +40,25 @@ function formatRange(startMin: number, endMin: number) {
   return `${minsToHHMM(startMin)} – ${minsToHHMM(endMin)}`;
 }
 
+function setEquals<A>(a: Set<A>, b: Set<A>) {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
+/** LocalStorage key (scoped to user + month to avoid cross-account drafts) */
+function lsKey(monthStr: string, email?: string) {
+  const who = (email || "anon").toLowerCase();
+  return `staffWeekDraft:v1:${who}:${monthStr}`;
+}
+
+type DraftShape = {
+  selections: string[];
+  everyWeekIds: string[];
+};
+
 /** ----- Component ----- */
-export default function StaffWeekCalendarToggleLocal() {
+export default function StaffWeekCalendarWithLocalDraft() {
   const qs = useSearchParams();
   const startISO = qs.get("start") || "2025-10-06";
   const daysParam = Math.max(1, Math.min(7, parseInt(qs.get("days") || "7", 10) || 7));
@@ -53,9 +72,10 @@ export default function StaffWeekCalendarToggleLocal() {
   const [availability, setAvailability] = useState<AvailabilityAPI | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Local-only UI state (initialized from availability if present)
+  // Local-only UI state (initialized from availability or a persisted draft)
   const [selectedLocal, setSelectedLocal] = useState<Set<string>>(new Set());
   const [everyWeekLocal, setEveryWeekLocal] = useState<Set<string>>(new Set());
+  const [dirty, setDirty] = useState(false);
 
   /** Load week blocks */
   useEffect(() => {
@@ -80,66 +100,107 @@ export default function StaffWeekCalendarToggleLocal() {
     return () => { alive = false; };
   }, [startISO, daysParam]);
 
-  /** Load availability (read-only, then hydrate local toggles) */
+  /** Load availability (server truth), hydrate from LS draft if present */
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const res = await fetch(`/api/availability?month=${encodeURIComponent(monthStr)}`, { cache: "no-store" });
+        let data: AvailabilityAPI;
         if (!res.ok) {
           // 401 when signed out → show empty selection
           if (res.status === 401) {
-            if (alive) {
-              setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
-              setSelectedLocal(new Set());
-              setEveryWeekLocal(new Set());
-            }
-            return;
+            data = { month: monthStr, selections: [], everyWeekIds: [] };
+          } else {
+            const t = await res.text();
+            console.warn("[staff/week calendar] availability fetch non-200:", res.status, t);
+            data = { month: monthStr, selections: [], everyWeekIds: [] };
           }
-          const t = await res.text();
-          console.warn("[staff/week calendar] availability fetch non-200:", res.status, t);
-          if (alive) {
-            setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
-            setSelectedLocal(new Set());
-            setEveryWeekLocal(new Set());
-          }
-          return;
+        } else {
+          data = await res.json();
         }
-        const data: AvailabilityAPI = await res.json();
-        if (alive) {
-          setAvailability(data);
-          setSelectedLocal(new Set(data.selections ?? []));
-          setEveryWeekLocal(new Set(data.everyWeekIds ?? []));
+
+        if (!alive) return;
+
+        setAvailability(data);
+
+        // Try to load a draft for this user+month; if present, prefer it
+        const key = lsKey(monthStr, data.user?.email);
+        const raw = typeof window !== "undefined" ? localStorage.getItem(key) : null;
+
+        if (raw) {
+          try {
+            const draft = JSON.parse(raw) as DraftShape;
+            const sel = new Set(draft.selections ?? []);
+            const ew = new Set(draft.everyWeekIds ?? []);
+            setSelectedLocal(sel);
+            setEveryWeekLocal(ew);
+            // Compare to server to set dirty flag
+            const serverSel = new Set(data.selections ?? []);
+            const serverEw = new Set(data.everyWeekIds ?? []);
+            setDirty(!setEquals(sel, serverSel) || !setEquals(ew, serverEw));
+          } catch {
+            // Bad JSON → fall back to server truth
+            const sel = new Set(data.selections ?? []);
+            const ew = new Set(data.everyWeekIds ?? []);
+            setSelectedLocal(sel);
+            setEveryWeekLocal(ew);
+            setDirty(false);
+          }
+        } else {
+          // No draft → use server truth
+          const sel = new Set(data.selections ?? []);
+          const ew = new Set(data.everyWeekIds ?? []);
+          setSelectedLocal(sel);
+          setEveryWeekLocal(ew);
+          setDirty(false);
         }
       } catch (e) {
         console.warn(e);
-        if (alive) {
-          setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
-          setSelectedLocal(new Set());
-          setEveryWeekLocal(new Set());
-        }
+        if (!alive) return;
+        setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+        setSelectedLocal(new Set());
+        setEveryWeekLocal(new Set());
+        setDirty(false);
       }
     })();
     return () => { alive = false; };
+    // monthStr is the scope; when month changes, re-evaluate
   }, [monthStr]);
+
+  /** Persist draft to LS whenever local changes occur */
+  useEffect(() => {
+    if (!availability) return;
+    const key = lsKey(monthStr, availability.user?.email);
+    const draft: DraftShape = {
+      selections: Array.from(selectedLocal),
+      everyWeekIds: Array.from(everyWeekLocal),
+    };
+    try {
+      localStorage.setItem(key, JSON.stringify(draft));
+    } catch {
+      /* ignore quota issues */
+    }
+
+    // Update dirty flag vs server truth
+    const serverSel = new Set(availability.selections ?? []);
+    const serverEw = new Set(availability.everyWeekIds ?? []);
+    setDirty(!setEquals(selectedLocal, serverSel) || !setEquals(everyWeekLocal, serverEw));
+  }, [selectedLocal, everyWeekLocal, availability, monthStr]);
 
   /** Build vertical time axis from all blocks in the week */
   const timeline = useMemo<number[]>(() => {
     if (!week) return [];
-
     const times = new Set<number>();
-    for (const d of week?.days ?? []) {
+    for (const d of week.days) {
       for (const b of d.blocks) {
         times.add(b.startMin);
         times.add(b.endMin);
       }
     }
     const arr = Array.from(times).sort((a, b) => a - b);
-
-    // Safety: if sparse, build hours 7:00–22:00
     const minTime = arr[0] ?? 7 * 60;
     const maxTime = arr[arr.length - 1] ?? 22 * 60;
-
     const startHour = Math.floor(minTime / 60) * 60;
     const endHour = Math.ceil(maxTime / 60) * 60;
     const out: number[] = [];
@@ -176,14 +237,75 @@ export default function StaffWeekCalendarToggleLocal() {
     });
   }
 
+  function onResetToServer() {
+    if (!availability) return;
+    const sel = new Set(availability.selections ?? []);
+    const ew = new Set(availability.everyWeekIds ?? []);
+    setSelectedLocal(sel);
+    setEveryWeekLocal(ew);
+    setDirty(false);
+    const key = lsKey(monthStr, availability.user?.email);
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <div>
-      <div className="surface" style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+      <div
+        className="surface"
+        style={{
+          padding: 16,
+          marginBottom: 16,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
         <div>
           <h1 style={{ margin: 0, fontWeight: 400, fontSize: 20 }}>My Availability — Week (Calendar)</h1>
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
-            Month: <strong>{monthStr}</strong> • Local preview (not saved)
+            Month: <strong>{monthStr}</strong> • Local draft (not saved)
           </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {dirty ? (
+            <span
+              className="pill"
+              style={{
+                borderColor: "#ef4444",
+                background: "color-mix(in oklab, #ef4444 10%, transparent)",
+                color: "#ef4444",
+                fontSize: 12,
+              }}
+            >
+              Unsaved changes
+            </span>
+          ) : (
+            <span
+              className="pill"
+              style={{
+                borderColor: "var(--border-strong)",
+                background: "transparent",
+                color: "var(--muted)",
+                fontSize: 12,
+              }}
+            >
+              Up to date
+            </span>
+          )}
+
+          <button className="btn" onClick={onResetToServer} disabled={!dirty} title="Discard local draft">
+            Reset
+          </button>
+
+          <button className="btn btn-primary" disabled title="Save to server (next step)">
+            Save
+          </button>
         </div>
       </div>
 
