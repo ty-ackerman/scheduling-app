@@ -24,7 +24,6 @@ type AvailabilityAPI = {
   month: string;        // "YYYY-MM"
   selections: string[]; // blockIds
   everyWeekIds: string[];
-  // Optional user payload if your API returns it (our GET does):
   user?: { id: string; email: string; name?: string | null };
 };
 
@@ -57,8 +56,7 @@ type DraftShape = {
   everyWeekIds: string[];
 };
 
-/** ----- Component ----- */
-export default function StaffWeekCalendarWithLocalDraft() {
+export default function StaffWeekCalendarWithLocalDraftAndSave() {
   const qs = useSearchParams();
   const startISO = qs.get("start") || "2025-10-06";
   const daysParam = Math.max(1, Math.min(7, parseInt(qs.get("days") || "7", 10) || 7));
@@ -70,12 +68,16 @@ export default function StaffWeekCalendarWithLocalDraft() {
 
   const [week, setWeek] = useState<WeekAPI | null>(null);
   const [availability, setAvailability] = useState<AvailabilityAPI | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Local-only UI state (initialized from availability or a persisted draft)
+  // Local draft state
   const [selectedLocal, setSelectedLocal] = useState<Set<string>>(new Set());
   const [everyWeekLocal, setEveryWeekLocal] = useState<Set<string>>(new Set());
+
+  // UI flags
   const [dirty, setDirty] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   /** Load week blocks */
   useEffect(() => {
@@ -86,7 +88,7 @@ export default function StaffWeekCalendarWithLocalDraft() {
         const res = await fetch(`/api/blocks/week?start=${encodeURIComponent(startISO)}&days=${daysParam}`, { cache: "no-store" });
         if (!res.ok) {
           const t = await res.text();
-          console.error("[staff/week calendar] blocks fetch failed:", t);
+          console.error("[staff/week] blocks fetch failed:", t);
           if (alive) setErrorMsg("Failed to load week blocks.");
           return;
         }
@@ -108,12 +110,11 @@ export default function StaffWeekCalendarWithLocalDraft() {
         const res = await fetch(`/api/availability?month=${encodeURIComponent(monthStr)}`, { cache: "no-store" });
         let data: AvailabilityAPI;
         if (!res.ok) {
-          // 401 when signed out → show empty selection
           if (res.status === 401) {
             data = { month: monthStr, selections: [], everyWeekIds: [] };
           } else {
             const t = await res.text();
-            console.warn("[staff/week calendar] availability fetch non-200:", res.status, t);
+            console.warn("[staff/week] availability fetch non-200:", res.status, t);
             data = { month: monthStr, selections: [], everyWeekIds: [] };
           }
         } else {
@@ -124,7 +125,7 @@ export default function StaffWeekCalendarWithLocalDraft() {
 
         setAvailability(data);
 
-        // Try to load a draft for this user+month; if present, prefer it
+        // If we have a draft in LS, prefer it for the local state
         const key = lsKey(monthStr, data.user?.email);
         const raw = typeof window !== "undefined" ? localStorage.getItem(key) : null;
 
@@ -135,7 +136,6 @@ export default function StaffWeekCalendarWithLocalDraft() {
             const ew = new Set(draft.everyWeekIds ?? []);
             setSelectedLocal(sel);
             setEveryWeekLocal(ew);
-            // Compare to server to set dirty flag
             const serverSel = new Set(data.selections ?? []);
             const serverEw = new Set(data.everyWeekIds ?? []);
             setDirty(!setEquals(sel, serverSel) || !setEquals(ew, serverEw));
@@ -165,7 +165,6 @@ export default function StaffWeekCalendarWithLocalDraft() {
       }
     })();
     return () => { alive = false; };
-    // monthStr is the scope; when month changes, re-evaluate
   }, [monthStr]);
 
   /** Persist draft to LS whenever local changes occur */
@@ -215,7 +214,6 @@ export default function StaffWeekCalendarWithLocalDraft() {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
-        // also clear everyWeek when unselecting
         setEveryWeekLocal(prevEW => {
           const ew = new Set(prevEW);
           ew.delete(id);
@@ -252,6 +250,57 @@ export default function StaffWeekCalendarWithLocalDraft() {
     }
   }
 
+  async function onSaveToServer() {
+    if (!availability) return;
+    setSaving(true);
+    setErrorMsg(null);
+    setSavedFlash(false);
+
+    const blockIds = Array.from(selectedLocal);
+    const everyWeekIds = Array.from(everyWeekLocal);
+
+    try {
+      const res = await fetch("/api/availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          month: monthStr,
+          blockIds,
+          everyWeekIds,
+        }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("[staff/week] save failed:", res.status, text);
+        setErrorMsg(res.status === 401 ? "You are signed out. Please sign in and try again." : "Failed to save changes.");
+        setSaving(false);
+        return;
+      }
+
+      // Success → align server truth and local draft
+      setAvailability({
+        month: monthStr,
+        selections: blockIds,
+        everyWeekIds,
+        user: availability.user,
+      });
+      const key = lsKey(monthStr, availability.user?.email);
+      try {
+        localStorage.setItem(key, JSON.stringify({ selections: blockIds, everyWeekIds }));
+      } catch { /* ignore */ }
+
+      setDirty(false);
+      setSaving(false);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1200);
+    } catch (e) {
+      console.error(e);
+      setErrorMsg("Failed to save changes.");
+      setSaving(false);
+    }
+  }
+
   return (
     <div>
       <div
@@ -268,7 +317,7 @@ export default function StaffWeekCalendarWithLocalDraft() {
         <div>
           <h1 style={{ margin: 0, fontWeight: 400, fontSize: 20 }}>My Availability — Week (Calendar)</h1>
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
-            Month: <strong>{monthStr}</strong> • Local draft (not saved)
+            Month: <strong>{monthStr}</strong>
           </div>
         </div>
 
@@ -282,8 +331,21 @@ export default function StaffWeekCalendarWithLocalDraft() {
                 color: "#ef4444",
                 fontSize: 12,
               }}
+              title="Local draft differs from what’s on the server"
             >
               Unsaved changes
+            </span>
+          ) : savedFlash ? (
+            <span
+              className="pill"
+              style={{
+                borderColor: "#34d399",
+                background: "color-mix(in oklab, #34d399 12%, transparent)",
+                color: "#34d399",
+                fontSize: 12,
+              }}
+            >
+              Saved
             </span>
           ) : (
             <span
@@ -299,21 +361,35 @@ export default function StaffWeekCalendarWithLocalDraft() {
             </span>
           )}
 
-          <button className="btn" onClick={onResetToServer} disabled={!dirty} title="Discard local draft">
+          {errorMsg && (
+            <span
+              className="pill"
+              style={{
+                borderColor: "#ef4444",
+                background: "color-mix(in oklab, #ef4444 10%, transparent)",
+                color: "#ef4444",
+                fontSize: 12,
+              }}
+              title={errorMsg}
+            >
+              {errorMsg}
+            </span>
+          )}
+
+          <button className="btn" onClick={onResetToServer} disabled={!dirty || saving} title="Discard local draft">
             Reset
           </button>
 
-          <button className="btn btn-primary" disabled title="Save to server (next step)">
-            Save
+          <button
+            className="btn btn-primary"
+            onClick={onSaveToServer}
+            disabled={!dirty || saving}
+            title={dirty ? "Save changes to server" : "No changes to save"}
+          >
+            {saving ? "Saving…" : "Save"}
           </button>
         </div>
       </div>
-
-      {errorMsg && (
-        <div className="surface" style={{ padding: 12, borderColor: "#fca5a5", marginBottom: 16 }}>
-          <div style={{ color: "#ef4444", fontSize: 13 }}>{errorMsg}</div>
-        </div>
-      )}
 
       {!week ? (
         <div className="surface" style={{ padding: 16 }}>Loading…</div>
@@ -447,7 +523,6 @@ export default function StaffWeekCalendarWithLocalDraft() {
                               <label
                                 data-ew-toggle
                                 onClick={(e) => {
-                                  // Don’t let label click bubble to the block
                                   e.stopPropagation();
                                 }}
                                 style={{
@@ -469,7 +544,6 @@ export default function StaffWeekCalendarWithLocalDraft() {
                                     toggleEveryWeek(b.id);
                                   }}
                                   onClick={(e) => {
-                                    // Prevent parent button click
                                     e.stopPropagation();
                                   }}
                                   style={{ cursor: "pointer" }}
