@@ -1,79 +1,49 @@
-// src/components/HeaderNav.tsx
 "use client";
 
 import Link from "next/link";
-import { useSession, signIn, signOut } from "next-auth/react";
+import { useEffect, useState } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
 
 export default function HeaderNav() {
   const { data: session, status } = useSession();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-  const userName =
-    (session?.user?.name || session?.user?.email || "Account")
-      .toString()
-      .trim();
-
-  // First initial + last name style
-  const avatarText = userName
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p, i) => (i === 0 ? p[0] : p))
-    .join(" ")
-    .toUpperCase();
+  const user = session?.user;
+  const initial = (user?.name || user?.email || "?").slice(0, 1).toUpperCase();
 
   return (
-    <header className="navbar">
+    <div className="navbar">
       <div className="container nav-row">
-        <Link href="/" className="brand">
-          <span className="brand-dot" />
-          <span>Scheduling App</span>
+        <Link className="brand" href="/" aria-label="Home">
+          <span className="brand-dot" aria-hidden="true" />
+          Scheduling App
         </Link>
 
-        <nav className="nav-links">
-          <Link href="/week-by-date?start=2025-10-06&days=7" className="nav-link">
-            Week View
-          </Link>
-          {/* Show staff view when signed in */}
-          {status === "authenticated" && (
-            <Link
-              href="/staff/week?start=2025-10-06&days=7"
-              className="nav-link"
-            >
-              My availability
-            </Link>
-          )}
-          {/* Manager link placeholder (hide for now if you haven’t re-added roles) */}
-          {/* <Link href="/manager" className="nav-link">Manager</Link> */}
+        <nav className="nav-links" aria-label="Primary">
+          <Link className="nav-link" href="/week">Week View</Link>
+          {mounted && user && <Link className="nav-link" href="/profile">Profile</Link>}
+          {/* Manager-only links would be conditionally added here once we add a manager flag */}
         </nav>
 
         <div className="nav-right">
-          {status === "authenticated" ? (
-            <>
-              <div className="pill">
-                <span className="avatar" aria-hidden>
-                  {avatarText[0] ?? "U"}
-                </span>
-                <span>{userName}</span>
-                {/* simple role chip placeholder */}
-                <span className="role-chip">STAFF</span>
-              </div>
-              <button
-                className="btn btn-quiet"
-                onClick={() => signOut({ callbackUrl: "/" })}
-              >
+          {!mounted ? (
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>Loading…</span>
+          ) : user ? (
+            <div className="pill" style={{ gap: 10 }}>
+              <span className="avatar" aria-hidden="true">{initial}</span>
+              <span style={{ fontSize: 12 }}>{user.name || user.email}</span>
+              <button className="btn btn-quiet" onClick={() => signOut()} style={{ height: 28 }}>
                 Sign out
               </button>
-            </>
+            </div>
           ) : (
-            <button
-              className="btn btn-primary"
-              onClick={() => signIn("google")}
-            >
+            <button className="btn" onClick={() => signIn("google")}>
               Sign in
             </button>
           )}
         </div>
       </div>
-    </header>
+    </div>
   );
 }
