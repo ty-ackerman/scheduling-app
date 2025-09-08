@@ -27,16 +27,20 @@ enum MonthStatus {
 
 /// ---------- Core Auth Models (NextAuth) ----------
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  image     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String    @id @default(cuid())
+  email          String    @unique
+  name           String?
+  image          String?
+  emailVerified  DateTime?              // required by NextAuth adapter
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   // Profile
-  location  Location @default(COLLEGE_WEST) // single for now (extensible later)
-  rolesJson Json     @default("[]") // array of Role strings, e.g. ["FACILITATOR","FRONT_DESK"]
+  location       Location  @default(COLLEGE_WEST)
+
+  // NOTE: SQLite + Prisma doesn't allow JSON defaults.
+  // Keep this as Json? and default to [] in application code.
+  rolesJson      Json?
 
   // Relations
   accounts       Account[]
@@ -52,6 +56,7 @@ model Account {
   type              String
   provider          String
   providerAccountId String
+  // For SQLite, remove @db.Text native type annotations
   refresh_token     String?
   access_token      String?
   expires_at        Int?
@@ -87,16 +92,14 @@ model VerificationToken {
 }
 
 /// ---------- Scheduling Models ----------
-/// Weekly template block (recurs each week on `day`)
 model Block {
-  id       String  @id @default(cuid())
-  day      Int // 1=Mon … 7=Sun
-  startMin Int // minutes from 00:00
-  endMin   Int // minutes from 00:00
-  label    String?
-  locked   Boolean @default(false)
-  isClass  Boolean @default(false)
-
+  id        String   @id @default(cuid())
+  day       Int      // 1..7 (Mon..Sun)
+  startMin  Int
+  endMin    Int
+  label     String?
+  locked    Boolean  @default(false)
+  isClass   Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -106,11 +109,10 @@ model Block {
   @@map("Block")
 }
 
-/// Scheduling month (e.g., 2025 / 10)
 model Month {
   id        String      @id @default(cuid())
   year      Int
-  month     Int // 1..12
+  month     Int         // 1..12
   status    MonthStatus @default(DRAFT)
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
@@ -121,16 +123,14 @@ model Month {
   @@map("Month")
 }
 
-/// User availability per (Month x Block)
-/// If `everyWeek` is true, it means “available for this block each week in this month”.
 model Availability {
-  id        String   @id @default(cuid())
-  userId    String
-  monthId   String
-  blockId   String
-  everyWeek Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  userId     String
+  monthId    String
+  blockId    String
+  everyWeek  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   month Month @relation(fields: [monthId], references: [id], onDelete: Cascade)
