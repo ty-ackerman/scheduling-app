@@ -1,347 +1,294 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { DateTime } from "luxon";
 
-type ApiWeek = {
-  startISO: string;
-  days: { dateISO: string; weekday: number; blocks: Block[] }[];
-};
+/** ----- Types from APIs ----- */
 type Block = {
   id: string;
-  day: number;
-  startMin: number;
-  endMin: number;
-  label: string | null;
+  day: number;         // 1..7 (Mon..Sun)
+  startMin: number;    // minutes from 00:00
+  endMin: number;      // minutes from 00:00
+  label?: string | null;
   locked: boolean;
   isClass: boolean;
 };
 
-type AvailGet = {
-  month: string; // "YYYY-MM"
-  user: { id: string; email: string; name: string | null };
-  selections: string[];
+type WeekAPI = {
+  startISO: string; // week start date (Mon) e.g., 2025-10-06
+  days: { dateISO: string; blocks: Block[] }[];
+};
+
+type AvailabilityAPI = {
+  month: string;        // "YYYY-MM"
+  selections: string[]; // blockIds
   everyWeekIds: string[];
 };
 
-const HOUR_PX = 80;
-const BLOCK_GAP_PX = 45;
-const DAY_START_MIN = 7 * 60;
-const DAY_END_MIN = 22 * 60;
+/** ----- Helpers ----- */
+const HOUR_STEP_MIN = 60;
 
-function fmt24(mins: number) {
-  const h = Math.floor(mins / 60), m = mins % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-function to12h(mins: number) {
+function minsToHHMM(mins: number) {
   const dt = DateTime.fromObject({ hour: Math.floor(mins / 60), minute: mins % 60 });
-  return dt.toFormat("h:mm a").replace(":00", "");
-}
-function monthFromISO(startISO: string) {
-  const d = DateTime.fromISO(startISO);
-  return d.toFormat("yyyy-LL");
-}
-function classNames(...xs: (string | undefined | false)[]) {
-  return xs.filter(Boolean).join(" ");
+  return dt.toFormat("h:mm a");
 }
 
-export default function StaffWeekPage() {
+function formatRange(startMin: number, endMin: number) {
+  return `${minsToHHMM(startMin)} – ${minsToHHMM(endMin)}`;
+}
+
+/** ----- Component ----- */
+export default function StaffWeekCalendarReadOnly() {
   const qs = useSearchParams();
-  const startISO = qs.get("start") || "2025-10-06"; // default to Oct 6 for your dataset
-  const days = Math.max(1, Math.min(7, Number(qs.get("days") || 7)));
-  const [week, setWeek] = useState<ApiWeek | null>(null);
-  const [server, setServer] = useState<AvailGet | null>(null);
+  const startISO = qs.get("start") || "2025-10-06";
+  const daysParam = Math.max(1, Math.min(7, parseInt(qs.get("days") || "7", 10) || 7));
 
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [every, setEvery] = useState<Set<string>>(new Set());
+  const monthStr = useMemo(() => {
+    const dt = DateTime.fromISO(startISO);
+    return dt.isValid ? dt.toFormat("yyyy-LL") : "2025-10";
+  }, [startISO]);
 
-  const [status, setStatus] =
-    useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
+  const [week, setWeek] = useState<WeekAPI | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityAPI | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const monthKey = useMemo(() => {
-    const m = monthFromISO(startISO); // "2025-10"
-    const uid = server?.user?.id ?? "unknown";
-    return `avail:${uid}:${m}`;
-  }, [startISO, server?.user?.id]);
+  /** Load week blocks */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setErrorMsg(null);
+      try {
+        const res = await fetch(`/api/blocks/week?start=${encodeURIComponent(startISO)}&days=${daysParam}`, { cache: "no-store" });
+        if (!res.ok) {
+          const t = await res.text();
+          console.error("[staff/week calendar] blocks fetch failed:", t);
+          if (alive) setErrorMsg("Failed to load week blocks.");
+          return;
+        }
+        const data: WeekAPI = await res.json();
+        if (alive) setWeek(data);
+      } catch (e) {
+        console.error(e);
+        if (alive) setErrorMsg("Failed to load week blocks.");
+      }
+    })();
+    return () => { alive = false; };
+  }, [startISO, daysParam]);
 
-  // Load week blocks and server availability
+  /** Load availability read-only */
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        setStatus("idle");
-        const [wRes, aRes] = await Promise.all([
-          fetch(`/api/blocks/week?start=${encodeURIComponent(startISO)}&days=${days}`, { cache: "no-store" }),
-          fetch(`/api/availability?month=${encodeURIComponent(monthFromISO(startISO))}`, { cache: "no-store" }),
-        ]);
-        if (!wRes.ok) throw new Error(await wRes.text());
-        if (!aRes.ok) throw new Error(await aRes.text());
-        const w: ApiWeek = await wRes.json();
-        const a: AvailGet = await aRes.json();
-        if (!alive) return;
-        setWeek(w);
-        setServer(a);
-
-        // Build valid ids set from this view
-        const valid = new Set<string>(
-          w.days.flatMap(d => d.blocks.map(b => b.id))
-        );
-
-        // Merge: prefer localStorage for this user+month if present; sanitize against valid ids
-        const raw = localStorage.getItem(`avail:${a.user.id}:${a.month}`);
-        let local: { sel: string[]; ev: string[] } | null = null;
-        try { local = raw ? JSON.parse(raw) : null; } catch { local = null; }
-
-        const selFrom = local?.sel ?? a.selections ?? [];
-        const evFrom = local?.ev ?? a.everyWeekIds ?? [];
-
-        const cleanedSel = selFrom.filter(id => valid.has(id));
-        const cleanedEv = evFrom.filter(id => valid.has(id) && cleanedSel.includes(id));
-
-        setSelected(new Set(cleanedSel));
-        setEvery(new Set(cleanedEv));
-
-        const serverSet = new Set(a.selections);
-        const serverEvery = new Set(a.everyWeekIds);
-        const sameSel = cleanedSel.length === serverSet.size && cleanedSel.every(id => serverSet.has(id));
-        const sameEv = cleanedEv.length === serverEvery.size && cleanedEv.every(id => serverEvery.has(id));
-
-        setStatus(sameSel && sameEv ? "idle" : "dirty");
-
-        // If LS had stale ids, rewrite
-        if (local && (!sameSel || !sameEv)) {
-          localStorage.setItem(`avail:${a.user.id}:${a.month}`, JSON.stringify({ sel: cleanedSel, ev: cleanedEv }));
+        const res = await fetch(`/api/availability?month=${encodeURIComponent(monthStr)}`, { cache: "no-store" });
+        if (!res.ok) {
+          // 401 when signed out → show empty selection
+          if (res.status === 401) {
+            if (alive) setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+            return;
+          }
+          const t = await res.text();
+          console.warn("[staff/week calendar] availability fetch non-200:", res.status, t);
+          if (alive) setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
+          return;
         }
+        const data: AvailabilityAPI = await res.json();
+        if (alive) setAvailability(data);
       } catch (e) {
-        console.error(e);
-        setStatus("error");
+        console.warn(e);
+        if (alive) setAvailability({ month: monthStr, selections: [], everyWeekIds: [] });
       }
     })();
     return () => { alive = false; };
-  }, [startISO, days]);
+  }, [monthStr]);
 
-  const validIds = useMemo(() => new Set(week?.days.flatMap(d => d.blocks.map(b => b.id)) ?? []), [week]);
+  const selectedIds = useMemo(() => new Set(availability?.selections ?? []), [availability]);
+  const everyWeekIds = useMemo(() => new Set(availability?.everyWeekIds ?? []), [availability]);
 
-  function toggle(id: string) {
-    if (!validIds.has(id)) return;
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-        setEvery(ev => {
-          const ne = new Set(ev);
-          ne.delete(id);
-          return ne;
-        });
-      } else {
-        next.add(id);
+  /** Build vertical time axis from all blocks in the week */
+  const timeline = useMemo<number[]>(() => {
+    if (!week) return [];
+
+    const times = new Set<number>();
+    for (const d of week.days) {
+      for (const b of d.blocks) {
+        times.add(b.startMin);
+        times.add(b.endMin);
       }
-      setStatus("dirty");
-      return next;
-    });
-  }
-
-  function toggleEvery(id: string) {
-    if (!validIds.has(id) || !selected.has(id)) return;
-    setEvery(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      setStatus("dirty");
-      return next;
-    });
-  }
-
-  async function onSave() {
-    if (!server) return;
-    setStatus("saving");
-    const blockIds = Array.from(selected).filter(id => validIds.has(id));
-    const everyWeekIds = Array.from(every).filter(id => selected.has(id) && validIds.has(id));
-    try {
-      const res = await fetch("/api/availability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          month: server.month,
-          blockIds,
-          everyWeekIds,
-        }),
-      });
-      if (!res.ok) {
-        console.error("Save failed:", await res.text());
-        setStatus("error");
-        return;
-      }
-      // Sync LS to saved state
-      localStorage.setItem(`avail:${server.user.id}:${server.month}`, JSON.stringify({ sel: blockIds, ev: everyWeekIds }));
-      setStatus("saved");
-      setTimeout(() => setStatus("idle"), 1200);
-    } catch (e) {
-      console.error(e);
-      setStatus("error");
     }
-  }
+    const arr = Array.from(times).sort((a, b) => a - b);
 
-  function onResetToServer() {
-    if (!server || !week) return;
-    const valid = new Set<string>(week.days.flatMap(d => d.blocks.map(b => b.id)));
-    const cleanedSel = (server.selections ?? []).filter(id => valid.has(id));
-    const cleanedEv = (server.everyWeekIds ?? []).filter(id => valid.has(id) && cleanedSel.includes(id));
-    setSelected(new Set(cleanedSel));
-    setEvery(new Set(cleanedEv));
-    localStorage.removeItem(`avail:${server.user.id}:${server.month}`);
-    setStatus("idle");
-  }
+    // Safety: if sparse, build hours 7:00–22:00
+    const minTime = arr[0] ?? 7 * 60;
+    const maxTime = arr[arr.length - 1] ?? 22 * 60;
 
-  // Timeline ticks
-  const ticks: number[] = [];
-  for (let t = DAY_START_MIN; t <= DAY_END_MIN; t += 60) ticks.push(t);
-
-  const saveBtnClass = classNames(
-    "btn",
-    status === "dirty" && "btn",
-    status === "saved" && "btn",
-    status === "saving" && "btn",
-  );
+    const startHour = Math.floor(minTime / 60) * 60;
+    const endHour = Math.ceil(maxTime / 60) * 60;
+    const out: number[] = [];
+    for (let t = startHour; t <= endHour; t += HOUR_STEP_MIN) out.push(t);
+    return out;
+  }, [week]);
 
   return (
-    <div className="container" style={{ paddingTop: 24, paddingBottom: 24 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 600 }}>My Availability</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn" onClick={onResetToServer}>Reset to server</button>
-          <button className={saveBtnClass} onClick={onSave} disabled={status === "saving"}>
-            {status === "dirty" && "Save (unsaved changes)"}
-            {status === "saving" && "Saving…"}
-            {status === "saved" && "Saved"}
-            {(status === "idle" || status === "error") && "Save"}
-          </button>
+    <div>
+      <div className="surface" style={{ padding: 16, marginBottom: 16, display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h1 style={{ margin: 0, fontWeight: 400, fontSize: 20 }}>My Availability — Week (Calendar)</h1>
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>
+            Month: <strong>{monthStr}</strong> • Read-only preview
+          </div>
         </div>
       </div>
 
+      {errorMsg && (
+        <div className="surface" style={{ padding: 12, borderColor: "#fca5a5", marginBottom: 16 }}>
+          <div style={{ color: "#ef4444", fontSize: 13 }}>{errorMsg}</div>
+        </div>
+      )}
+
       {!week ? (
-        <div>Loading…</div>
+        <div className="surface" style={{ padding: 16 }}>Loading…</div>
       ) : (
-        <>
-          <div style={{ color: "var(--muted)", marginBottom: 10 }}>
-            Week of {DateTime.fromISO(week.startISO).toFormat("ccc MMM dd")} • Month {monthFromISO(week.startISO)}
+        <div className="surface" style={{ padding: 0, overflow: "hidden" }}>
+          {/* Header row: Time + 7 days */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "80px repeat(7, 1fr)",
+              borderBottom: "1px solid var(--border)",
+              background: "var(--card)",
+            }}
+          >
+            <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--muted)" }}>Time</div>
+            {week.days.map((d) => {
+              const label = DateTime.fromISO(d.dateISO).toFormat("ccc MM/dd");
+              return (
+                <div key={d.dateISO} style={{ padding: "10px 8px", textAlign: "center", fontSize: 12, color: "var(--muted)" }}>
+                  {label}
+                </div>
+              );
+            })}
           </div>
 
-          <div className="surface" style={{ overflow: "hidden", borderRadius: 12 }}>
-            {/* header */}
-            <div style={{ display: "grid", gridTemplateColumns: `80px repeat(${week.days.length}, 1fr)`, borderBottom: "1px solid var(--border)" }}>
-              <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--muted)" }}>Time</div>
-              {week.days.map(d => (
-                <div key={d.dateISO} style={{ padding: "10px 12px", textAlign: "center", fontSize: 12 }}>
-                  {DateTime.fromISO(d.dateISO).toFormat("ccc MM/dd")}
+          {/* Body grid: time column + 7 day columns */}
+          <div style={{ display: "grid", gridTemplateColumns: "80px repeat(7, 1fr)", position: "relative" }}>
+            {/* Time rail */}
+            <div style={{ borderRight: "1px solid var(--border)" }}>
+              {timeline.map((t, i) => (
+                <div
+                  key={t}
+                  style={{
+                    height: 64, // 1h = 64px
+                    borderBottom: "1px solid var(--border)",
+                    fontSize: 11,
+                    color: "var(--muted)",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "flex-end",
+                    paddingRight: 8,
+                    paddingTop: 6,
+                    background: i % 2 ? "var(--hover)" : "transparent",
+                  }}
+                >
+                  {DateTime.fromObject({ hour: Math.floor(t / 60), minute: 0 }).toFormat("HH:mm")}
                 </div>
               ))}
             </div>
 
-            {/* body */}
-            <div style={{ display: "grid", gridTemplateColumns: `80px repeat(${week.days.length}, 1fr)` }}>
-              {/* time column */}
-              <div style={{ borderRight: "1px solid var(--border)" }}>
-                {ticks.map(t => (
-                  <div key={t} style={{
-                    height: HOUR_PX,
-                    borderBottom: "1px solid var(--border)",
-                    fontSize: 12, color: "var(--muted)",
-                    display: "flex", alignItems: "flex-start", justifyContent: "flex-end",
-                    paddingRight: 8, paddingTop: 6
-                  }}>
-                    {fmt24(t)}
-                  </div>
-                ))}
-              </div>
+            {/* Seven day columns */}
+            {week.days.map((d) => {
+              const firstTick = timeline[0] ?? 7 * 60;
 
-              {/* day columns */}
-              {week.days.map(d => (
+              return (
                 <div key={d.dateISO} style={{ position: "relative", borderRight: "1px solid var(--border)" }}>
-                  {/* grid rows */}
-                  {ticks.map((t, i) => (
-                    <div key={t} style={{
-                      height: HOUR_PX,
-                      borderBottom: "1px solid var(--border)",
-                      background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent",
-                    }} />
+                  {/* Hour stripes */}
+                  {timeline.map((t, i) => (
+                    <div key={t} style={{ height: 64, borderBottom: "1px solid var(--border)", background: i % 2 ? "var(--hover)" : "transparent" }} />
                   ))}
 
-                  {/* blocks */}
-                  <div style={{ position: "absolute", inset: 0, padding: "0 10px" }}>
-                    {d.blocks.map(b => {
-                      const topBase = ((b.startMin - DAY_START_MIN) / 60) * HOUR_PX;
-                      let heightPx = ((b.endMin - b.startMin) / 60) * HOUR_PX;
-                      const topPx = topBase + BLOCK_GAP_PX / 2;
-                      heightPx = Math.max(24, heightPx - BLOCK_GAP_PX);
+                  {/* Absolute layer with blocks */}
+                  <div style={{ position: "absolute", inset: 0, padding: "6px 8px" }}>
+                    {d.blocks.map((b) => {
+                      // Positioning
+                      const topPx = ((b.startMin - firstTick) / HOUR_STEP_MIN) * 64 + 2; // +2 for visual breathing
+                      const heightPx = Math.max(24, ((b.endMin - b.startMin) / HOUR_STEP_MIN) * 64 - 8); // min height + spacing
+                      const isSelected = selectedIds.has(b.id);
+                      const everyWeek = everyWeekIds.has(b.id);
 
-                      const isOn = selected.has(b.id);
-                      const isEvery = every.has(b.id);
+                      // Colors: neutral blue for base, muted when locked
+                      const baseBg = b.locked ? "rgba(148,163,184,0.20)" : "rgba(59,130,246,0.14)"; // gray/blue
+                      const baseBorder = b.locked ? "rgba(148,163,184,0.55)" : "rgba(59,130,246,0.55)";
 
                       return (
                         <div
                           key={b.id}
+                          className="surface"
                           style={{
                             position: "absolute",
-                            left: 10, right: 10, top: topPx, height: heightPx,
-                            borderRadius: 16,
-                            border: "1px solid rgba(80,150,255,0.55)",
-                            background: isOn
-                              ? "linear-gradient(180deg, rgba(16,185,129,0.30), rgba(5,150,105,0.30))"
-                              : "linear-gradient(180deg, rgba(40,90,150,0.55), rgba(20,50,95,0.55))",
-                            boxShadow: "0 10px 22px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.04)",
-                            padding: "12px 14px",
+                            left: 8,
+                            right: 8,
+                            top: topPx,
+                            height: heightPx,
+                            borderRadius: 10,
+                            padding: "10px 12px",
+                            background: baseBg,
+                            border: `1px solid ${baseBorder}`,
+                            boxShadow: "0 6px 10px rgba(0,0,0,0.06)",
+                            backdropFilter: "saturate(120%) blur(2px)",
                             display: "flex",
                             flexDirection: "column",
-                            justifyContent: "space-between",
-                            cursor: b.locked ? "not-allowed" : "pointer",
-                            filter: b.locked ? "grayscale(0.4) opacity(0.7)" : "none",
+                            gap: 6,
                           }}
-                          onClick={() => { if (!b.locked) toggle(b.id); }}
+                          title={formatRange(b.startMin, b.endMin)}
                         >
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                            <div style={{ fontSize: 18, fontWeight: 700 }}>
-                              {to12h(b.startMin)}–{to12h(b.endMin)}
-                            </div>
-                            {b.isClass && (
-                              <span style={{
-                                border: "1px solid rgba(255,255,255,0.5)",
-                                borderRadius: 999, padding: "2px 8px", fontSize: 12, fontWeight: 600,
-                                background: "rgba(255,255,255,0.06)",
-                              }}>
-                                CLASS
+                          <div style={{ fontSize: 12, fontWeight: 400 }}>
+                            {formatRange(b.startMin, b.endMin)}
+                            {b.label ? <span style={{ marginLeft: 8, color: "var(--muted)" }}>• {b.label}</span> : null}
+                            {b.isClass ? <span style={{ marginLeft: 8, color: "var(--muted-2)", fontSize: 11 }}>(Class)</span> : null}
+                            {b.locked ? <span style={{ marginLeft: 8, color: "var(--muted-2)", fontSize: 11 }}>(Locked)</span> : null}
+                          </div>
+
+                          {/* Chips row */}
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {isSelected && (
+                              <span
+                                style={{
+                                  padding: "2px 8px",
+                                  borderRadius: 999,
+                                  background: "var(--ok-bg)",
+                                  color: "var(--ok-fg)",
+                                  fontSize: 11,
+                                  border: "1px solid color-mix(in oklab, var(--ok-fg) 20%, transparent)",
+                                }}
+                              >
+                                Selected
+                              </span>
+                            )}
+                            {everyWeek && (
+                              <span
+                                style={{
+                                  padding: "2px 8px",
+                                  borderRadius: 999,
+                                  color: "var(--ok-fg)",
+                                  fontSize: 11,
+                                  border: "1px solid color-mix(in oklab, var(--ok-fg) 65%, transparent)",
+                                  background: "transparent",
+                                }}
+                              >
+                                Every week
                               </span>
                             )}
                           </div>
-
-                          {/* Every week switch (only visible when selected) */}
-                          {isOn && (
-                            <label
-                              onClick={(e) => e.stopPropagation()}
-                              style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, marginTop: 8, userSelect: "none" }}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isEvery}
-                                onChange={() => toggleEvery(b.id)}
-                              />
-                              Every week this month
-                            </label>
-                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
-
-          <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
-            Tip: Click a block to mark Available. When selected, you can mark “Every week this month”.
-          </div>
-        </>
+        </div>
       )}
     </div>
   );
