@@ -1,80 +1,91 @@
-// src/app/staff/week/page.tsx
 "use client";
 
 import { useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DateTime } from "luxon";
 import WeekHeader from "./components/WeekHeader";
-import CalendarGrid from "./components/CalendarGrid";
 import { useWeekData } from "./hooks/useWeekData";
-import { useAvailabilityDraft } from "./hooks/useAvailabilityDraft";
-import { mondayISOFrom } from "@/lib/time";
+import CalendarGrid from "./components/CalendarGrid";
 
 export default function StaffWeekPage() {
   const qs = useSearchParams();
   const router = useRouter();
 
+  // Month scope comes from query (?month=YYYY-MM) or inferred from start.
+  const monthQuery = qs.get("month") || "";
   const startISOQuery = qs.get("start") || "";
-  const daysParam = Math.max(1, Math.min(7, parseInt(qs.get("days") || "7", 10) || 7));
-  const weekStartISO = useMemo(() => mondayISOFrom(startISOQuery), [startISOQuery]);
+  const daysParam = Math.max(1, Math.min(7, parseInt(qs.get("days") || "7", 10)));
 
-  const { week, monthStr } = useWeekData(weekStartISO, daysParam);
+  const inferredMonth = useMemo(() => {
+    const src = startISOQuery || DateTime.local().startOf("week").plus({ days: 1 }).toISODate()!;
+    const dt = DateTime.fromISO(src);
+    return dt.isValid ? dt.toFormat("yyyy-LL") : DateTime.local().toFormat("yyyy-LL");
+  }, [startISOQuery]);
 
-  const {
-    availability,
-    selectedLocal, setSelectedLocal,
-    everyWeekLocal, setEveryWeekLocal,
-    dirty, saving, savedFlash, errorMsg, setErrorMsg,
-    onResetToServer, onSaveToServer,
-  } = useAvailabilityDraft(monthStr);
+  const monthStr = monthQuery || inferredMonth;
 
-  function pushWeek(newStartISO: string) {
-    router.push(`/staff/week?start=${encodeURIComponent(newStartISO)}&days=${daysParam}`);
+  // Compute this page's weekStart ISO (Monday) but clamped to the month scope.
+  const weekStartISO = useMemo(() => {
+    const desired = startISOQuery
+      ? DateTime.fromISO(startISOQuery)
+      : DateTime.local().startOf("week").plus({ days: 1 });
+    const monthDt = DateTime.fromFormat(monthStr, "yyyy-LL");
+
+    if (!monthDt.isValid) return desired.toISODate()!;
+
+    // Month bounds
+    const monthStart = monthDt.startOf("month");
+    const monthEnd = monthDt.endOf("month");
+
+    // Clamp the week's Monday into the month (if outside, snap to closest)
+    const monday = desired.startOf("week").plus({ days: 1 });
+    if (monday < monthStart) return monthStart.startOf("week").plus({ days: 1 }).toISODate()!;
+    if (monday > monthEnd) return monthEnd.startOf("week").plus({ days: 1 }).toISODate()!;
+    return monday.toISODate()!;
+  }, [startISOQuery, monthStr]);
+
+  // Fetch week data (server now respects month clamp)
+  const { week, loading, errorMsg } = useWeekData(weekStartISO, daysParam, monthStr);
+
+  const readOnly = (week?.month?.status ?? "DRAFT") === "FINAL";
+
+  function pushWeek(iso: string) {
+    router.push(`/staff/week?start=${encodeURIComponent(iso)}&days=${daysParam}&month=${monthStr}`);
   }
-  function goPrevWeek() { pushWeek(DateTime.fromISO(weekStartISO).minus({ weeks: 1 }).toISODate()!); }
-  function goNextWeek() { pushWeek(DateTime.fromISO(weekStartISO).plus({ weeks: 1 }).toISODate()!); }
-  function goThisWeek() { pushWeek(mondayISOFrom()); }
-
-  function toggleBlock(id: string, locked: boolean) {
-    if (locked) return;
-    setSelectedLocal(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-        setEveryWeekLocal(prevEW => { const ew = new Set(prevEW); ew.delete(id); return ew; });
-      } else { next.add(id); }
-      return next;
-    });
-  }
-  function toggleEveryWeek(id: string) {
-    setEveryWeekLocal(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
-  }
+  const onPrev = () => {
+    const dt = DateTime.fromISO(weekStartISO).minus({ weeks: 1 });
+    pushWeek(dt.toISODate()!);
+  };
+  const onNext = () => {
+    const dt = DateTime.fromISO(weekStartISO).plus({ weeks: 1 });
+    pushWeek(dt.toISODate()!);
+  };
+  const onThisWeek = () => {
+    const monday = DateTime.local().startOf("week").plus({ days: 1 });
+    const inMonth = DateTime.fromFormat(monthStr, "yyyy-LL");
+    const snapped =
+      monday < inMonth.startOf("month") ? inMonth.startOf("month") :
+      monday > inMonth.endOf("month")   ? inMonth.endOf("month")   : monday;
+    pushWeek(snapped.toISODate()!);
+  };
 
   return (
     <div>
       <WeekHeader
         weekStartISO={weekStartISO}
         monthStr={monthStr}
-        dirty={dirty}
-        savedFlash={savedFlash}
-        errorMsg={errorMsg}
-        onPrev={goPrevWeek}
-        onNext={goNextWeek}
-        onThisWeek={goThisWeek}
-        onReset={onResetToServer}
-        onSave={onSaveToServer}
-        saveDisabled={saving}
+        readOnly={readOnly}
+        onPrev={onPrev}
+        onNext={onNext}
+        onThisWeek={onThisWeek}
       />
-
-      {!week ? (
-        <div className="surface" style={{ padding: 16 }}>Loading…</div>
-      ) : (
+      {loading && <div className="surface" style={{ padding: 16 }}>Loading…</div>}
+      {errorMsg && <div className="surface" style={{ padding: 16, color: "#ef4444" }}>{errorMsg}</div>}
+      {week && (
         <CalendarGrid
           week={week}
-          selectedLocal={selectedLocal}
-          everyWeekLocal={everyWeekLocal}
-          toggleBlock={toggleBlock}
-          toggleEveryWeek={toggleEveryWeek}
+          monthStr={monthStr}
+          readOnly={readOnly}
         />
       )}
     </div>
