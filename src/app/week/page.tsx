@@ -1,27 +1,72 @@
-// app/week/page.tsx
-// Protects /week: if not logged in, redirect to home page.
+"use client";
 
-import { redirect } from "next/navigation";
-import { getServerSession } from "next-auth/next";
-import authOptions from "../../../auth.config";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { DateTime } from "luxon";
 import WeekGrid from "@/components/WeekGrid";
 
-export default async function WeekPage() {
-  const session = await getServerSession(authOptions);
+type Block = {
+  id: string; day: number; startMin: number; endMin: number;
+  label?: string | null; locked: boolean; isClass: boolean;
+};
+type WeekAPI = { startISO: string; days: { dateISO: string; blocks: Block[] }[] };
 
-  if (!session?.user) {
-    redirect("/"); // Not logged in → go to home
+export default function WeekPage() {
+  const qs = useSearchParams();
+  const router = useRouter();
+
+  const startISO = qs.get("start")
+    || DateTime.local().startOf("week").plus({ days: 1 }).toISODate()!;
+  const days = Math.max(1, Math.min(7, parseInt(qs.get("days") || "7", 10)));
+
+  const monthStr = useMemo(
+    () => DateTime.fromISO(startISO).toFormat("yyyy-LL"),
+    [startISO]
+  );
+
+  const [week, setWeek] = useState<WeekAPI | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let ok = true;
+    (async () => {
+      const r = await fetch(`/api/blocks/week?start=${encodeURIComponent(startISO)}&days=${days}`, { cache: "no-store" });
+      if (!r.ok) return;
+      const data: WeekAPI = await r.json();
+      if (ok) setWeek(data);
+    })();
+    return () => { ok = false; };
+  }, [startISO, days]);
+
+  useEffect(() => {
+    let ok = true;
+    (async () => {
+      const r = await fetch(`/api/availability/summary?month=${monthStr}`, { cache: "no-store" });
+      const data = r.ok ? await r.json() : { counts: {} };
+      if (ok) setCounts(data.counts || {});
+    })();
+    return () => { ok = false; };
+  }, [monthStr]);
+
+  function nav(to: "prev" | "next" | "this") {
+    const base = DateTime.fromISO(startISO);
+    const dt =
+      to === "prev" ? base.minus({ weeks: 1 }) :
+      to === "next" ? base.plus({ weeks: 1 }) :
+      DateTime.local().startOf("week").plus({ days: 1 });
+    router.push(`/week?start=${dt.toISODate()}&days=${days}`);
   }
 
+  if (!week) return <div className="surface" style={{ padding: 16 }}>Loading…</div>;
+
   return (
-    <div className="surface" style={{ padding: 20 }}>
-      <h1 className="text-xl" style={{ fontWeight: 600, marginBottom: 12 }}>
-        Week View (Static)
-      </h1>
-      <p style={{ marginBottom: 16, color: "var(--muted-2)" }}>
-        Days × Time Blocks (09:00–12:00, 12:00–17:00, 17:00–21:00)
-      </p>
-      <WeekGrid />
-    </div>
+    <WeekGrid
+      title={`Week view • Month: ${monthStr}`}
+      week={week}
+      counts={counts}
+      onPrev={() => nav("prev")}
+      onNext={() => nav("next")}
+      onThisWeek={() => nav("this")}
+    />
   );
 }

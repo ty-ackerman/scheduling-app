@@ -1,143 +1,120 @@
 "use client";
 
-import React from "react";
 import { DateTime } from "luxon";
-import { prisma } from "@/lib/db"; // server-side loader lives in the page; this file is client-only for rendering
 
 type Block = {
-  id: string;
-  day: number;       // 1..7
-  startMin: number;
-  endMin: number;
-  label: string | null;
-  locked: boolean;
-  isClass: boolean;  // <-- NEW
+  id: string; day: number; startMin: number; endMin: number;
+  label?: string | null; locked: boolean; isClass: boolean;
 };
+type WeekAPI = { startISO: string; days: { dateISO: string; blocks: Block[] }[] };
 
 type Props = {
-  weekStartISO: string;           // Monday ISO date e.g. "2025-10-06"
-  days: Array<{ dateISO: string; blocks: Block[] }>;
+  title?: string;
+  week: WeekAPI;
+  counts: Record<string, number>;
+  onPrev(): void; onNext(): void; onThisWeek(): void;
 };
 
-const ROW_HEIGHT = 64; // px per hour
-const GAP = 8;         // vertical spacing between adjacent blocks
+const H = 64; // 1h px height
 
-function fmtRange(minA: number, minB: number) {
-  const s = DateTime.fromObject({ hour: Math.floor(minA / 60), minute: minA % 60 }).toFormat("HH:mm");
-  const e = DateTime.fromObject({ hour: Math.floor(minB / 60), minute: minB % 60 }).toFormat("HH:mm");
-  return `${s}–${e}`;
+function hhmm(mins: number) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return DateTime.fromObject({ hour: h, minute: m }).toFormat("h:mm");
 }
 
-export default function WeekGrid({ weekStartISO, days }: Props) {
-  // Build vertical timeline from the earliest start / latest end in the week
-  const allTimes = Array.from(
+export default function WeekGrid({ title = "Week view", week, counts, onPrev, onNext, onThisWeek }: Props) {
+  // time rail from visible blocks
+  const times = Array.from(
     new Set(
-      days.flatMap(d => d.blocks.flatMap(b => [b.startMin, b.endMin]))
+      week.days.flatMap(d => d.blocks.flatMap(b => [b.startMin, b.endMin]))
     )
   ).sort((a, b) => a - b);
-
-  const minTime = allTimes[0] ?? 7 * 60;
-  const maxTime = allTimes[allTimes.length - 1] ?? 22 * 60;
-
-  const timeline: number[] = [];
-  for (let t = Math.floor(minTime / 60) * 60; t <= Math.ceil(maxTime / 60) * 60; t += 60) {
-    timeline.push(t);
-  }
+  const first = (times[0] ?? 7 * 60);
+  const last  = (times[times.length - 1] ?? 21 * 60);
+  const startHour = Math.floor(first / 60) * 60;
+  const endHour   = Math.ceil(last / 60) * 60;
+  const rail: number[] = [];
+  for (let t = startHour; t <= endHour; t += 60) rail.push(t);
 
   return (
-    <div className="container" style={{ paddingTop: 24, paddingBottom: 24 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 500, marginBottom: 16 }}>Week by Date</h1>
+    <div className="surface" style={{ padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div>
+          <h2 style={{ margin: 0, fontWeight: 400 }}>{title}</h2>
+          <div style={{ color: "var(--muted)", fontSize: 12 }}>
+            Week of {DateTime.fromISO(week.startISO).toFormat("yyyy-LL-dd")}
+          </div>
+        </div>
+        <div className="pill" style={{ gap: 6 }}>
+          <button className="btn btn-quiet" onClick={onPrev}>← Prev</button>
+          <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
+          <button className="btn btn-quiet" onClick={onThisWeek}>This week</button>
+          <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
+          <button className="btn btn-quiet" onClick={onNext}>Next →</button>
+        </div>
+      </div>
 
-      <div className="surface" style={{ overflow: "hidden" }}>
-        {/* Header */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "80px repeat(7, 1fr)",
-            background: "var(--bg)",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          <div style={{ padding: "12px 8px", fontSize: 12, color: "var(--muted)" }}>Time</div>
-          {days.map((d) => {
-            const label = DateTime.fromISO(d.dateISO).toFormat("ccc MM/dd");
-            return (
-              <div key={d.dateISO} style={{ padding: "12px 12px", textAlign: "center", fontSize: 12 }}>
-                {label}
-              </div>
-            );
-          })}
+      <div className="surface" style={{ padding: 0, overflow: "hidden" }}>
+        {/* header */}
+        <div style={{ display: "grid", gridTemplateColumns: "80px repeat(7, 1fr)", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--muted)" }}>Time</div>
+          {week.days.map(d => (
+            <div key={d.dateISO} style={{ padding: "10px 8px", textAlign: "center", fontSize: 12, color: "var(--muted)" }}>
+              {DateTime.fromISO(d.dateISO).toFormat("ccc MM/dd")}
+            </div>
+          ))}
         </div>
 
-        {/* Grid */}
+        {/* body */}
         <div style={{ display: "grid", gridTemplateColumns: "80px repeat(7, 1fr)", position: "relative" }}>
-          {/* Time column */}
+          {/* time rail */}
           <div style={{ borderRight: "1px solid var(--border)" }}>
-            {timeline.map((t) => (
-              <div
-                key={t}
-                style={{
-                  height: ROW_HEIGHT,
-                  borderBottom: "1px solid var(--border)",
-                  fontSize: 12,
-                  color: "var(--muted)",
-                  display: "flex",
-                  alignItems: "flex-start",
-                  justifyContent: "flex-end",
-                  paddingRight: 8,
-                  paddingTop: 6,
-                }}
-              >
-                {DateTime.fromObject({ hour: Math.floor(t / 60), minute: 0 }).toFormat("HH:mm")}
+            {rail.map((t, i) => (
+              <div key={t} style={{
+                height: H, borderBottom: "1px solid var(--border)",
+                fontSize: 11, color: "var(--muted)",
+                display: "flex", alignItems: "flex-start", justifyContent: "flex-end",
+                paddingRight: 8, paddingTop: 6, background: i % 2 ? "var(--hover)" : "transparent"
+              }}>
+                {DateTime.fromObject({ hour: Math.floor(t / 60) }).toFormat("HH:00")}
               </div>
             ))}
           </div>
 
-          {/* Day columns */}
-          {days.map((d) => (
-            <div key={d.dateISO} style={{ position: "relative", borderRight: "1px solid var(--border)", padding: "0 10px" }}>
-              {/* background rows */}
-              {timeline.map((t, i) => (
-                <div key={t} style={{
-                  height: ROW_HEIGHT,
-                  borderBottom: "1px solid",
-                  borderColor: i % 2 ? "var(--border)" : "color-mix(in oklab, var(--border) 60%, transparent)",
-                }} />
+          {/* days */}
+          {week.days.map(d => (
+            <div key={d.dateISO} style={{ position: "relative", borderRight: "1px solid var(--border)" }}>
+              {rail.map((t, i) => (
+                <div key={t} style={{ height: H, borderBottom: "1px solid var(--border)", background: i % 2 ? "var(--hover)" : "transparent" }} />
               ))}
 
               {/* blocks */}
-              <div style={{ position: "absolute", inset: 0 }}>
+              <div style={{ position: "absolute", inset: 0, padding: "6px 8px" }}>
                 {d.blocks.map(b => {
-                  const top = ((b.startMin - timeline[0]) / 60) * ROW_HEIGHT + GAP / 2;
-                  const height = Math.max(1, (b.endMin - b.startMin) / 60) * ROW_HEIGHT - GAP;
-
-                  const border = b.isClass ? "#fb923c" : "#f59e0b"; // orange-ish if CLASS, softer otherwise
-                  const bg = "color-mix(in oklab, var(--fg) 6%, transparent)";
+                  const top = ((b.startMin - startHour) / 60) * H + 2;
+                  const height = Math.max(24, ((b.endMin - b.startMin) / 60) * H - 8);
+                  const n = counts[b.id] ?? 0;
+                  const hasAvail = n > 0;
+                  const bg = hasAvail ? "rgba(16,185,129,0.18)" : "rgba(59,130,246,0.14)";
+                  const border = hasAvail ? "rgba(16,185,129,0.55)" : "rgba(59,130,246,0.55)";
 
                   return (
-                    <div
-                      key={b.id}
-                      className="cal-block"
+                    <div key={b.id}
+                      className="surface"
                       style={{
-                        position: "absolute",
-                        left: 12,
-                        right: 12,
-                        top,
-                        height,
-                        borderRadius: 12,
-                        border: `1px solid ${border}`,
-                        background: bg,
-                        boxShadow: "0 2px 10px rgba(0,0,0,0.25)",
-                        padding: "10px 12px",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div style={{ fontSize: 12, fontWeight: 600, color: border }}>
-                        {fmtRange(b.startMin, b.endMin)}
-                        {b.isClass && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 500, color: border, opacity: 0.9 }}>CLASS</span>}
+                        position: "absolute", left: 8, right: 8, top, height,
+                        borderRadius: 10, padding: "10px 12px",
+                        background: bg, border: `1px solid ${border}`,
+                        boxShadow: "0 6px 10px rgba(0,0,0,0.06)", backdropFilter: "saturate(120%) blur(2px)"
+                      }}>
+                      <div style={{ fontSize: 12 }}>
+                        {hhmm(b.startMin)}–{hhmm(b.endMin)}
+                        {b.isClass && <span style={{ marginLeft: 8, color: "var(--muted-2)", fontSize: 11 }}>(Class)</span>}
                       </div>
-                      {b.label && <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted-2)" }}>{b.label}</div>}
-                      {b.locked && <div style={{ marginTop: 4, fontSize: 10, color: "var(--muted)" }}>Locked</div>}
+                      <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)" }}>
+                        {n} available
+                      </div>
                     </div>
                   );
                 })}
