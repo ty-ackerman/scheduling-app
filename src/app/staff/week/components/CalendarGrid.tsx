@@ -1,57 +1,66 @@
 "use client";
 
+import { useMemo } from "react";
 import { DateTime } from "luxon";
-import type { WeekAPI, Block } from "../types";
 
-type Props = {
-  week: WeekAPI;
-  monthStr: string;
-  readOnly: boolean;
+/** ----- Types kept local to this component ----- */
+type Block = {
+  id: string;
+  startMin: number;
+  endMin: number;
+  label?: string | null;
+  isClass?: boolean;
+  locked?: boolean;
+};
 
-  /** Optional when readOnly. If omitted, the grid renders as view-only safely. */
-  selected?: Set<string>;
-  everyWeek?: Set<string>;
-  onToggleBlock?: (id: string, locked: boolean) => void;
-  onToggleEvery?: (id: string) => void;
+type WeekAPI = {
+  month?: { status?: "DRAFT" | "FINAL" };
+  days: { dateISO: string; blocks: Block[] }[];
 };
 
 const HOUR_PX = 64;
-const HOUR_STEP_MIN = 60;
+const STEP_MIN = 60;
 
-function minsToLabel(mins: number) {
-  const dt = DateTime.fromObject({ hour: Math.floor(mins / 60), minute: mins % 60 });
+function minsToHHMM(mins: number) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const dt = DateTime.fromObject({ hour: h, minute: m });
   return dt.toFormat("h:mm a");
 }
 
-function rangeLabel(b: Block) {
-  return `${minsToLabel(b.startMin)} – ${minsToLabel(b.endMin)}`;
+function rangeLabel(a: number, b: number) {
+  return `${minsToHHMM(a)} – ${minsToHHMM(b)}`;
 }
 
-export default function CalendarGrid({
-  week,
-  monthStr,
-  readOnly,
-  selected,
-  everyWeek,
-  onToggleBlock,
-  onToggleEvery,
-}: Props) {
-  // Safe defaults so `.has()` never explodes in view-only mode.
-  const selectedLocal = selected ?? new Set<string>();
-  const everyWeekLocal = everyWeek ?? new Set<string>();
-  const toggleBlock = onToggleBlock ?? (() => {});
-  const toggleEvery = onToggleEvery ?? (() => {});
+function buildTimeline(week: WeekAPI) {
+  const set = new Set<number>();
+  for (const d of week.days) for (const b of d.blocks) {
+    set.add(b.startMin); set.add(b.endMin);
+  }
+  const arr = Array.from(set).sort((a, b) => a - b);
+  const start = (arr[0] ?? 7 * 60);
+  const end = (arr[arr.length - 1] ?? 22 * 60);
+  const startHour = Math.floor(start / 60) * 60;
+  const endHour = Math.ceil(end / 60) * 60;
+  const out: number[] = [];
+  for (let t = startHour; t <= endHour; t += STEP_MIN) out.push(t);
+  return out;
+}
 
-  // Build vertical time rail
-  const allTimes = Array.from(
-    new Set(week.days.flatMap((d) => d.blocks.flatMap((b) => [b.startMin, b.endMin])))
-  ).sort((a, b) => a - b);
-  const firstTick = allTimes[0] ?? 7 * 60;
-  const lastTick = allTimes[allTimes.length - 1] ?? 22 * 60;
-  const startHour = Math.floor(firstTick / 60) * 60;
-  const endHour = Math.ceil(lastTick / 60) * 60;
-  const ticks: number[] = [];
-  for (let t = startHour; t <= endHour; t += HOUR_STEP_MIN) ticks.push(t);
+export default function CalendarGrid(props: {
+  week: WeekAPI;
+  monthStr: string;
+  readOnly: boolean;
+  selectedLocal?: Set<string>;
+  onToggleBlock: (id: string) => void;
+}) {
+  const { week, readOnly, selectedLocal, onToggleBlock } = props;
+
+  // defend against undefined set
+  const selected = selectedLocal ?? new Set<string>();
+
+  const timeline = useMemo(() => buildTimeline(week), [week]);
+  const firstTick = timeline[0] ?? 7 * 60;
 
   return (
     <div className="surface" style={{ padding: 0, overflow: "hidden" }}>
@@ -64,9 +73,7 @@ export default function CalendarGrid({
           background: "var(--card)",
         }}
       >
-        <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--muted)" }}>
-          Week of {DateTime.fromISO(week.startISO).toFormat("yyyy-LL-dd")} • Month: {monthStr}
-        </div>
+        <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--muted)" }}>Time</div>
         {week.days.map((d) => (
           <div
             key={d.dateISO}
@@ -77,11 +84,11 @@ export default function CalendarGrid({
         ))}
       </div>
 
-      {/* Body grid */}
+      {/* Body */}
       <div style={{ display: "grid", gridTemplateColumns: "80px repeat(7, 1fr)", position: "relative" }}>
         {/* Time rail */}
         <div style={{ borderRight: "1px solid var(--border)" }}>
-          {ticks.map((t, i) => (
+          {timeline.map((t, i) => (
             <div
               key={t}
               style={{
@@ -97,7 +104,7 @@ export default function CalendarGrid({
                 background: i % 2 ? "var(--hover)" : "transparent",
               }}
             >
-              {DateTime.fromObject({ hour: Math.floor(t / 60) }).toFormat("HH:00")}
+              {DateTime.fromObject({ hour: Math.floor(t / 60), minute: 0 }).toFormat("HH:mm")}
             </div>
           ))}
         </div>
@@ -105,36 +112,34 @@ export default function CalendarGrid({
         {/* Day columns */}
         {week.days.map((d) => (
           <div key={d.dateISO} style={{ position: "relative", borderRight: "1px solid var(--border)" }}>
-            {/* stripes */}
-            {ticks.map((t, i) => (
+            {/* Hour stripes */}
+            {timeline.map((t, i) => (
               <div
                 key={t}
                 style={{ height: HOUR_PX, borderBottom: "1px solid var(--border)", background: i % 2 ? "var(--hover)" : "transparent" }}
               />
             ))}
-            {/* blocks */}
+
+            {/* Blocks */}
             <div style={{ position: "absolute", inset: 0, padding: "6px 8px" }}>
               {d.blocks.map((b) => {
-                const top = ((b.startMin - firstTick) / HOUR_STEP_MIN) * HOUR_PX + 2;
-                const h = Math.max(24, ((b.endMin - b.startMin) / HOUR_STEP_MIN) * HOUR_PX - 8);
-                const isSel = selectedLocal.has(b.id);
-                const isEvery = everyWeekLocal.has(b.id);
+                const top = ((b.startMin - firstTick) / STEP_MIN) * HOUR_PX + 2;
+                const h = Math.max(24, ((b.endMin - b.startMin) / STEP_MIN) * HOUR_PX - 8);
+                const isSelected = selected.has(b.id);
+                const disabled = readOnly || !!b.locked;
 
-                const baseBg = b.locked ? "rgba(148,163,184,0.20)" : "rgba(59,130,246,0.14)";
-                const baseBorder = b.locked ? "rgba(148,163,184,0.55)" : "rgba(59,130,246,0.55)";
+                const baseBg = disabled ? "rgba(148,163,184,0.20)" : "rgba(59,130,246,0.14)";
+                const baseBorder = disabled ? "rgba(148,163,184,0.55)" : "rgba(59,130,246,0.55)";
+                const selBg = "color-mix(in oklab, #22c55e 14%, transparent)";
+                const selBorder = "color-mix(in oklab, #22c55e 55%, transparent)";
 
                 return (
                   <button
                     key={b.id}
                     type="button"
+                    disabled={disabled}
+                    onClick={() => onToggleBlock(b.id)}
                     className="surface"
-                    disabled={b.locked || readOnly}
-                    title={rangeLabel(b)}
-                    onClick={(e) => {
-                      // Ignore clicks from the inner “Every week” checkbox
-                      if ((e.target as HTMLElement).closest("[data-ew-toggle]")) return;
-                      toggleBlock(b.id, !!b.locked);
-                    }}
                     style={{
                       position: "absolute",
                       left: 8,
@@ -143,26 +148,27 @@ export default function CalendarGrid({
                       height: h,
                       borderRadius: 10,
                       padding: "10px 12px",
-                      background: baseBg,
-                      border: `1px solid ${baseBorder}`,
+                      background: isSelected ? selBg : baseBg,
+                      border: `1px solid ${isSelected ? selBorder : baseBorder}`,
                       boxShadow: "0 6px 10px rgba(0,0,0,0.06)",
+                      backdropFilter: "saturate(120%) blur(2px)",
                       display: "flex",
                       flexDirection: "column",
                       gap: 6,
-                      cursor: b.locked || readOnly ? "default" : "pointer",
+                      cursor: disabled ? "not-allowed" : "pointer",
                       textAlign: "left",
                     }}
+                    title={rangeLabel(b.startMin, b.endMin)}
                   >
                     <div style={{ fontSize: 12, fontWeight: 400 }}>
-                      {rangeLabel(b)}
+                      {rangeLabel(b.startMin, b.endMin)}
                       {b.label ? <span style={{ marginLeft: 8, color: "var(--muted)" }}>• {b.label}</span> : null}
                       {b.isClass ? <span style={{ marginLeft: 8, color: "var(--muted-2)", fontSize: 11 }}>(Class)</span> : null}
                       {b.locked ? <span style={{ marginLeft: 8, color: "var(--muted-2)", fontSize: 11 }}>(Locked)</span> : null}
                     </div>
 
-                    {/* Chips + Every-week */}
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                      {isSel && (
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      {isSelected ? (
                         <span
                           style={{
                             padding: "2px 8px",
@@ -175,31 +181,11 @@ export default function CalendarGrid({
                         >
                           Selected
                         </span>
+                      ) : (
+                        <span style={{ fontSize: 11, color: "var(--muted-2)" }}>
+                          {disabled ? "Locked" : "Tap to select"}
+                        </span>
                       )}
-
-                      {isSel && !readOnly && (
-                        <label
-                          data-ew-toggle
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--muted)", cursor: "pointer" }}
-                        >
-                          <input
-                            data-ew-toggle
-                            type="checkbox"
-                            checked={isEvery}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              toggleEvery(b.id);
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ cursor: "pointer" }}
-                            aria-label="Every week"
-                          />
-                          Every week
-                        </label>
-                      )}
-
-                      {!isSel && !readOnly && <span style={{ fontSize: 11, color: "var(--muted-2)" }}>Tap to select</span>}
                     </div>
                   </button>
                 );

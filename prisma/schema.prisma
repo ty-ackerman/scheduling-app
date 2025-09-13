@@ -1,4 +1,3 @@
-// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -27,25 +26,22 @@ enum MonthStatus {
 
 /// ---------- Core Auth Models (NextAuth) ----------
 model User {
-  id             String    @id @default(cuid())
-  email          String    @unique
-  name           String?
-  image          String?
-  emailVerified  DateTime?              // required by NextAuth adapter
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  image     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Profile
-  location       Location  @default(COLLEGE_WEST)
-
-  // NOTE: SQLite + Prisma doesn't allow JSON defaults.
-  // Keep this as Json? and default to [] in application code.
-  rolesJson      Json?
+  location  Location @default(COLLEGE_WEST)
+  rolesJson Json     @default("[]") // JSON default for SQLite (empty array)
 
   // Relations
-  accounts       Account[]
-  sessions       Session[]
-  availabilities Availability[]
+  accounts          Account[]
+  sessions          Session[]
+  availabilities    Availability[]
+  dayAvailabilities DayAvailability[]
 
   @@map("User")
 }
@@ -56,13 +52,12 @@ model Account {
   type              String
   provider          String
   providerAccountId String
-  // For SQLite, remove @db.Text native type annotations
-  refresh_token     String?
-  access_token      String?
+  refresh_token     String? // remove @db.Text for SQLite
+  access_token      String? // remove @db.Text for SQLite
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String?
+  id_token          String? // remove @db.Text for SQLite
   session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -92,14 +87,17 @@ model VerificationToken {
 }
 
 /// ---------- Scheduling Models ----------
+
+/// (Legacy weekly template – kept in case you still use it elsewhere)
 model Block {
-  id        String   @id @default(cuid())
-  day       Int      // 1..7 (Mon..Sun)
-  startMin  Int
-  endMin    Int
-  label     String?
-  locked    Boolean  @default(false)
-  isClass   Boolean  @default(false)
+  id       String  @id @default(cuid())
+  day      Int // 1..7
+  startMin Int
+  endMin   Int
+  label    String?
+  locked   Boolean @default(false)
+  isClass  Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -112,25 +110,45 @@ model Block {
 model Month {
   id        String      @id @default(cuid())
   year      Int
-  month     Int         // 1..12
+  month     Int
   status    MonthStatus @default(DRAFT)
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
   availabilities Availability[]
+  datedBlocks    DatedBlock[]
 
   @@unique([year, month])
   @@map("Month")
 }
 
+/// Date-specific block (only render what exists in CSV-derived rows)
+model DatedBlock {
+  id       String  @id @default(cuid())
+  monthId  String
+  dateISO  String // YYYY-MM-DD
+  startMin Int
+  endMin   Int
+  label    String?
+  isClass  Boolean @default(false)
+  locked   Boolean @default(false)
+
+  month             Month             @relation(fields: [monthId], references: [id], onDelete: Cascade)
+  dayAvailabilities DayAvailability[]
+
+  @@index([monthId, dateISO, startMin])
+  @@map("DatedBlock")
+}
+
+/// Legacy monthly availability (kept for compatibility)
 model Availability {
-  id         String   @id @default(cuid())
-  userId     String
-  monthId    String
-  blockId    String
-  everyWeek  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  userId    String
+  monthId   String
+  blockId   String
+  everyWeek Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   month Month @relation(fields: [monthId], references: [id], onDelete: Cascade)
@@ -140,4 +158,20 @@ model Availability {
   @@index([monthId])
   @@index([blockId])
   @@map("Availability")
+}
+
+/// Per-date availability tied to DatedBlock
+model DayAvailability {
+  id           String   @id @default(cuid())
+  userId       String
+  datedBlockId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  datedBlock DatedBlock @relation(fields: [datedBlockId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, datedBlockId]) // prevents duplicates
+  @@index([datedBlockId])
+  @@map("DayAvailability")
 }

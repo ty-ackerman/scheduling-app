@@ -2,62 +2,104 @@ import { NextResponse } from "next/server";
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/db";
 
-// NOTE: This endpoint now clamps the returned range to the given (or inferred) month
-// and returns the Month status so the client can enforce read-only.
-
+/**
+ * GET /api/blocks/week?start=YYYY-MM-DD&days=7
+ * Returns the dated blocks for the requested week, plus (optionally) a quick
+ * per-datedBlock role tally computed from DayAvailability.
+ */
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const startStr = url.searchParams.get("start") || "";
-  const daysParam = Math.max(1, Math.min(7, parseInt(url.searchParams.get("days") || "7", 10)));
-  const monthStr = url.searchParams.get("month") || ""; // optional YYYY-MM
+  try {
+    const url = new URL(req.url);
+    const start = url.searchParams.get("start") || "";
+    const days = Math.max(1, Math.min(7, parseInt(url.searchParams.get("days") || "7", 10)));
 
-  // Resolve start Monday
-  const desired = startStr ? DateTime.fromISO(startStr) : DateTime.local().startOf("week").plus({ days: 1 });
-  const startMonday = desired.startOf("week").plus({ days: 1 });
+    const startDt = DateTime.fromISO(start);
+    if (!startDt.isValid) {
+      return NextResponse.json({ error: "Invalid start date" }, { status: 400 });
+    }
+    const endDt = startDt.plus({ days });
 
-  // Resolve month scope
-  const monthDt = monthStr ? DateTime.fromFormat(monthStr, "yyyy-LL") : startMonday;
-  const monthStart = monthDt.startOf("month");
-  const monthEnd = monthDt.endOf("month");
+    // Month status for the header (use the month of the week’s Monday)
+    const monthYear = startDt.year;
+    const monthNum = startDt.month;
+    const monthRow = await prisma.month.findUnique({
+      where: { year_month: { year: monthYear, month: monthNum } },
+      select: { id: true, status: true },
+    });
 
-  // Clamp the week to lie within the month (best-effort)
-  let effectiveStart = startMonday;
-  if (effectiveStart < monthStart) effectiveStart = monthStart.startOf("week").plus({ days: 1 });
-  if (effectiveStart > monthEnd) effectiveStart = monthEnd.startOf("week").plus({ days: 1 });
+    // Pull all dated blocks within [start, end)
+    const datedBlocks = await prisma.datedBlock.findMany({
+      where: {
+        dateISO: {
+          gte: startDt.toISODate()!,
+          lt: endDt.toISODate()!,
+        },
+      },
+      orderBy: [{ dateISO: "asc" }, { startMin: "asc" }],
+      select: {
+        id: true,
+        dateISO: true,
+        startMin: true,
+        endMin: true,
+        label: true,
+        isClass: true,
+        locked: true,
+      },
+    });
 
-  // Fetch Month row (may be null)
-  const monthRow = await prisma.month.findUnique({
-    where: { year_month: { year: effectiveStart.year, month: effectiveStart.month } },
-  });
+    // Build day array
+    const byDate = new Map<string, any[]>();
+    for (const b of datedBlocks) {
+      if (!byDate.has(b.dateISO)) byDate.set(b.dateISO, []);
+      byDate.get(b.dateISO)!.push(b);
+    }
 
-  // Fetch weekly template Blocks (day-of-week based). Date-specific overrides come next step.
-  const blocks = await prisma.block.findMany({
-    orderBy: [{ day: "asc" }, { startMin: "asc" }],
-  });
+    const daysOut: { dateISO: string; blocks: any[] }[] = [];
+    for (let i = 0; i < days; i++) {
+      const dISO = startDt.plus({ days: i }).toISODate()!;
+      daysOut.push({
+        dateISO: dISO,
+        blocks: byDate.get(dISO) ?? [],
+      });
+    }
 
-  // Build days for the requested span, but clamp to the month bounds.
-  const days: { dateISO: string; blocks: any[] }[] = [];
-  for (let i = 0; i < daysParam; i++) {
-    const day = effectiveStart.plus({ days: i });
-    if (day < monthStart || day > monthEnd) continue;
-    const weekday = day.weekday; // 1..7
-    const dayBlocks = blocks
-      .filter(b => b.day === weekday)
-      .map(b => ({
-        id: b.id,
-        dateISO: day.toISODate()!,
-        startMin: b.startMin,
-        endMin: b.endMin,
-        locked: b.locked,
-        label: b.label,
-        isClass: b.isClass,
-      }));
-    days.push({ dateISO: day.toISODate()!, blocks: dayBlocks });
+    // ---- OPTIONAL: role tallies for each datedBlock (Manager view uses /api/availability/summary,
+    // but having this here also supports chips on the grid) ----
+    // If there are no blocks in range, skip the extra query.
+    let tallies: Record<string, { FACILITATOR: number; FRONT_DESK: number; CLEANER: number }> = {};
+    if (datedBlocks.length) {
+      // DayAvailability has (id, userId, datedBlockId, createdAt, updatedAt)
+      const avs = await prisma.dayAvailability.findMany({
+        where: { datedBlockId: { in: datedBlocks.map((b) => b.id) } },
+        select: {
+          datedBlockId: true,
+          user: { select: { rolesJson: true } }, // rolesJson: string[]
+        },
+      });
+
+      tallies = avs.reduce<typeof tallies>((acc, a) => {
+        const key = a.datedBlockId;
+        if (!acc[key]) acc[key] = { FACILITATOR: 0, FRONT_DESK: 0, CLEANER: 0 };
+        const roles: string[] = Array.isArray(a.user?.rolesJson) ? (a.user!.rolesJson as string[]) : [];
+        for (const r of roles) {
+          if (r === "FACILITATOR" || r === "FRONT_DESK" || r === "CLEANER") {
+            acc[key][r] += 1;
+          }
+        }
+        return acc;
+      }, {});
+    }
+
+    return NextResponse.json({
+      startISO: startDt.toISODate(),
+      endISO: endDt.toISODate(),
+      month: monthRow ? { id: monthRow.id, status: monthRow.status } : null,
+      days: daysOut,
+      tallies, // keyed by datedBlockId
+    });
+  } catch (err) {
+    console.error("[/api/blocks/week] error:", err);
+    // Always return JSON so the client doesn’t hit “Unexpected end of JSON input”
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-
-  return NextResponse.json({
-    startISO: effectiveStart.toISODate()!,
-    month: monthRow ? { id: monthRow.id, status: monthRow.status, year: monthRow.year, month: monthRow.month } : { status: "DRAFT" },
-    days,
-  });
 }

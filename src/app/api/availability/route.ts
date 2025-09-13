@@ -1,4 +1,3 @@
-// src/app/api/availability/route.ts
 import { NextResponse } from "next/server";
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/db";
@@ -6,82 +5,102 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
 function parseMonthParam(m?: string) {
-  if (!m) return null; // expect "YYYY-MM"
+  if (!m) return null;
   const dt = DateTime.fromFormat(m, "yyyy-LL");
   return dt.isValid ? dt : null;
 }
 
 async function ensureMonth(year: number, month: number) {
-  let monthRow = await prisma.month.findUnique({ where: { year_month: { year, month } } });
-  if (!monthRow) {
-    monthRow = await prisma.month.create({ data: { year, month } });
-  }
-  return monthRow;
+  let row = await prisma.month.findUnique({ where: { year_month: { year, month } } });
+  if (!row) row = await prisma.month.create({ data: { year, month } });
+  return row;
 }
 
+/** -------- GET: load month selections (date-specific) -------- */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const monthStr = url.searchParams.get("month") || ""; // "2025-10"
+  const monthStr = url.searchParams.get("month") || "";
   const dt = parseMonthParam(monthStr);
+
+  console.log("[GET /api/availability] month param =", monthStr);
+
   if (!dt) {
-    return NextResponse.json({ error: "Invalid or missing month param (expected YYYY-MM)" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid or missing month (YYYY-MM)" }, { status: 400 });
   }
 
+  // Session is optional here – we still return a shape so UI can render
   const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const email = session?.user?.email ?? null;
+  let user: { id: string; email: string } | null = null;
 
-  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-  if (!user) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  if (email) {
+    const u = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, email: true, name: true }
+    });
+    if (u) user = { id: u.id, email: u.email };
   }
 
   const monthRow = await prisma.month.findUnique({
     where: { year_month: { year: dt.year, month: dt.month } },
+    select: { id: true, status: true },
   });
 
   if (!monthRow) {
+    console.log("[GET] no Month row -> empty selections");
     return NextResponse.json({
       month: monthStr,
-      user: { id: user.id, email: user.email, name: user.name ?? null },
+      monthStatus: "DRAFT",
+      user,
       selections: [],
       everyWeekIds: [],
     });
   }
 
-  const avs = await prisma.availability.findMany({
-    where: { userId: user.id, monthId: monthRow.id },
-    select: { blockId: true, everyWeek: true },
-  });
+  // Pull all dated blocks for the month’s visible week range will be done
+  // by the client via /api/blocks/week. For availability we only need IDs.
+  let selections: string[] = [];
+  if (user) {
+    const rows = await prisma.dayAvailability.findMany({
+      where: {
+        userId: user.id,
+        datedBlock: { monthId: monthRow.id },
+      },
+      select: { datedBlockId: true },
+    });
+    selections = rows.map(r => r.datedBlockId);
+  }
 
-  const selections = avs.map(a => a.blockId);
-  const everyWeekIds = avs.filter(a => a.everyWeek).map(a => a.blockId);
+  console.log("[GET] monthId:", monthRow.id, "status:", monthRow.status, "user?", !!user, "count:", selections.length);
 
   return NextResponse.json({
     month: monthStr,
-    user: { id: user.id, email: user.email, name: user.name ?? null },
+    monthStatus: monthRow.status,
+    user,
     selections,
-    everyWeekIds,
+    everyWeekIds: [], // legacy
   });
 }
 
+/** Payload from client */
 type SavePayload = {
-  month: string;           // "YYYY-MM"
-  blockIds: string[];      // selected blocks
-  everyWeekIds?: string[]; // subset marked "every week"
+  month: string;               // "YYYY-MM"
+  datedBlockIds: string[];     // selected blocks for this month
+  everyWeekIds?: string[];     // unused with DatedBlock; kept for compatibility
 };
 
+/** -------- POST: save month selections (date-specific) -------- */
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-  if (!user) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email },
+    select: { id: true, email: true },
+  });
+  if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
   let body: SavePayload;
   try {
@@ -91,54 +110,63 @@ export async function POST(req: Request) {
   }
 
   const dt = parseMonthParam(body.month);
-  if (!dt) {
-    return NextResponse.json({ error: "Invalid or missing month (YYYY-MM)" }, { status: 400 });
-  }
+  if (!dt) return NextResponse.json({ error: "Invalid or missing month (YYYY-MM)" }, { status: 400 });
 
   const monthRow = await ensureMonth(dt.year, dt.month);
+  const requestedIds = Array.isArray(body.datedBlockIds) ? body.datedBlockIds : [];
 
-  const blockIds = Array.isArray(body.blockIds) ? body.blockIds : [];
-  const everyWeekSet = new Set<string>(Array.isArray(body.everyWeekIds) ? body.everyWeekIds : []);
+  console.log("[POST /api/availability] START", {
+    user: user.email,
+    month: body.month,
+    requestedCount: requestedIds.length,
+  });
 
-  // Verify blocks exist
-  const existingBlocks = await prisma.block.findMany({
-    where: { id: { in: blockIds } },
+  // Validate IDs — only allow DatedBlocks from this month
+  const monthBlocks = await prisma.datedBlock.findMany({
+    where: { monthId: monthRow.id, id: { in: requestedIds } },
     select: { id: true },
   });
-  const validIdSet = new Set(existingBlocks.map(b => b.id));
-  const finalIds = blockIds.filter(id => validIdSet.has(id));
+  const validIdSet = new Set(monthBlocks.map(b => b.id));
+  const finalIds = requestedIds.filter(id => validIdSet.has(id));
+
+  console.log("[POST] validated IDs", { finalCount: finalIds.length });
 
   await prisma.$transaction(async (tx) => {
-    const current = await tx.availability.findMany({
-      where: { userId: user.id, monthId: monthRow.id },
-      select: { id: true, blockId: true },
+    // What's currently saved for this user in this month?
+    const current = await tx.dayAvailability.findMany({
+      where: { userId: user.id, datedBlock: { monthId: monthRow.id } },
+      select: { id: true, datedBlockId: true },
     });
-    const currentMap = new Map(current.map(a => [a.blockId, a.id]));
+    const currentIds = new Set(current.map(r => r.datedBlockId));
 
-    const toDelete = current.filter(a => !finalIds.includes(a.blockId)).map(a => a.id);
+    const toDelete = current.filter(r => !finalIds.includes(r.datedBlockId)).map(r => r.id);
+    const toAdd = finalIds.filter(id => !currentIds.has(id));
+
+    console.log("[POST] current:", current.length, "toAdd:", toAdd.length, "toDelete:", toDelete.length);
+
     if (toDelete.length) {
-      await tx.availability.deleteMany({ where: { id: { in: toDelete } } });
+      await tx.dayAvailability.deleteMany({ where: { id: { in: toDelete } } });
+      console.log("[POST] deleted rows:", toDelete.length);
     }
 
-    for (const blockId of finalIds) {
-      const existed = currentMap.get(blockId);
-      if (existed) {
-        await tx.availability.update({
-          where: { id: existed },
-          data: { everyWeek: everyWeekSet.has(blockId) },
-        });
-      } else {
-        await tx.availability.create({
-          data: {
-            userId: user.id,
-            monthId: monthRow.id,
-            blockId,
-            everyWeek: everyWeekSet.has(blockId),
-          },
-        });
-      }
+    if (toAdd.length) {
+      // NOTE: SQLite Prisma doesn’t support `skipDuplicates`, so we rely on
+      // @@unique([userId, datedBlockId]) and the pre-filter above.
+      await tx.dayAvailability.createMany({
+        data: toAdd.map((id) => ({ userId: user.id, datedBlockId: id })),
+      });
+      console.log("[POST] inserted rows:", toAdd.length);
     }
   });
 
-  return NextResponse.json({ ok: true, savedCount: finalIds.length });
+  console.log("[POST] DONE", { savedCount: finalIds.length });
+
+  // Return server truth so the client can mark “Saved”
+  return NextResponse.json({
+    ok: true,
+    month: body.month,
+    selections: finalIds,
+    everyWeekIds: [], // legacy
+    user: { id: user.id, email: user.email },
+  });
 }

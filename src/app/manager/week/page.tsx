@@ -1,7 +1,7 @@
-// Server component – redirect /manager -> /week (preserve query params)
+// Server component – redirect /manager/week -> /week (preserve query params)
 import { redirect } from "next/navigation";
 
-export default function ManagerRoot({
+export default function ManagerWeekAlias({
   searchParams,
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
