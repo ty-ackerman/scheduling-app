@@ -15,6 +15,7 @@ type Block = {
   locked: boolean;
   isClass: boolean;
 };
+
 type WeekAPI = {
   startISO: string;
   days: { dateISO: string; blocks: Block[] }[];
@@ -34,45 +35,58 @@ export default function WeekPage() {
     return DateTime.local().startOf("week").plus({ days: 1 }).toISODate()!;
   }, [startISOQuery]);
 
-  const monthStr = useMemo(() => DateTime.fromISO(weekStartISO).toFormat("yyyy-LL"), [weekStartISO]);
+  const monthStr = useMemo(
+    () => DateTime.fromISO(weekStartISO).toFormat("yyyy-LL"),
+    [weekStartISO]
+  );
 
   const [week, setWeek] = useState<WeekAPI | null>(null);
 
-  // counts for “All” (no filter)
+  // counts for “All”
   const [countsAll, setCountsAll] = useState<Record<string, number>>({});
   // per-role counts
   const [countsByRole, setCountsByRole] = useState<Record<string, Record<string, number>>>({});
 
-  // NEW: radio-style role mode (one active at all times)
+  // One mode always selected (radio style)
   const [roleMode, setRoleMode] = useState<RoleMode>("ALL");
 
+  // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerBlock, setDrawerBlock] = useState<(Block & { dateISO: string }) | undefined>(undefined);
   const [drawerRoles, setDrawerRoles] = useState<string[]>([]);
 
+  // Load week grid
   useEffect(() => {
     let alive = true;
     (async () => {
-      const res = await fetch(`/api/blocks/week?start=${encodeURIComponent(weekStartISO)}&days=${daysParam}`, { cache: "no-store" });
+      const res = await fetch(
+        `/api/blocks/week?start=${encodeURIComponent(weekStartISO)}&days=${daysParam}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) {
+        console.error("[/week] blocks failed", res.status, await res.text());
+        return;
+      }
       const data: WeekAPI = await res.json();
       if (!alive) return;
       setWeek(data);
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [weekStartISO, daysParam]);
 
+  // Load counts for All + per-role
   useEffect(() => {
     let alive = true;
     (async () => {
-      // all
       const resAll = await fetch(`/api/availability/summary?month=${monthStr}`, { cache: "no-store" });
-      const jsonAll = await resAll.json();
+      const jsonAll = resAll.ok ? await resAll.json() : { counts: {} };
 
-      // per role
-      const roleEntries = await Promise.all(
+      const rolePairs = await Promise.all(
         ALL_ROLES.map(async (r) => {
           const res = await fetch(`/api/availability/summary?month=${monthStr}&roles=${r}`, { cache: "no-store" });
-          const j = await res.json();
+          const j = res.ok ? await res.json() : { counts: {} };
           return [r, j.counts || {}] as const;
         })
       );
@@ -80,10 +94,12 @@ export default function WeekPage() {
       if (!alive) return;
       setCountsAll(jsonAll.counts || {});
       const map: Record<string, Record<string, number>> = {};
-      for (const [r, c] of roleEntries) map[r] = c;
+      for (const [r, c] of rolePairs) map[r] = c;
       setCountsByRole(map);
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [monthStr]);
 
   function pushWeek(iso: string) {
@@ -93,31 +109,49 @@ export default function WeekPage() {
   const onNext = () => pushWeek(DateTime.fromISO(weekStartISO).plus({ weeks: 1 }).toISODate()!);
   const onThis = () => pushWeek(DateTime.local().startOf("week").plus({ days: 1 }).toISODate()!);
 
-  // derive props for grid from roleMode
-  const selectedRoles = roleMode === "ALL" ? ["FACILITATOR", "FRONT_DESK", "CLEANER"] : [];
-  const counts =
-    roleMode === "ALL"
-      ? countsAll
-      : countsByRole[roleMode] ?? {};
+  // Derive what we show based on mode
+  const selectedRoles =
+    roleMode === "ALL" ? ["FACILITATOR", "FRONT_DESK", "CLEANER"] : [roleMode];
+  const counts = roleMode === "ALL" ? countsAll : (countsByRole[roleMode] ?? {});
 
   return (
     <div>
       {/* Toolbar */}
-      <div className="surface" style={{ padding: 12, marginBottom: 12, display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between" }}>
+      <div
+        className="surface"
+        style={{
+          padding: 12,
+          marginBottom: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          justifyContent: "space-between",
+        }}
+      >
         <div>
-          <div style={{ fontSize: 18, fontWeight: 400, marginBottom: 4 }}>Manager Week View</div>
-          <div style={{ color: "var(--muted)", fontSize: 13 }}>Week of <strong>{weekStartISO}</strong> • Month: <strong>{monthStr}</strong></div>
+          <div style={{ fontSize: 18, fontWeight: 400, marginBottom: 4 }}>
+            Manager Week View
+          </div>
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>
+            Week of <strong>{weekStartISO}</strong> • Month: <strong>{monthStr}</strong>
+          </div>
         </div>
         <div className="pill" style={{ gap: 6 }}>
-          <button className="btn btn-quiet" onClick={onPrev}>← Prev</button>
+          <button className="btn btn-quiet" onClick={onPrev}>
+            ← Prev
+          </button>
           <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
-          <button className="btn btn-quiet" onClick={onThis}>This week</button>
+          <button className="btn btn-quiet" onClick={onThis}>
+            This week
+          </button>
           <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)" }} />
-          <button className="btn btn-quiet" onClick={onNext}>Next →</button>
+          <button className="btn btn-quiet" onClick={onNext}>
+            Next →
+          </button>
         </div>
       </div>
 
-      {/* Role selector (radio-style) */}
+      {/* Role selector */}
       <div style={{ marginBottom: 12 }}>
         <RoleChips value={roleMode} onChange={setRoleMode} />
       </div>
@@ -127,28 +161,35 @@ export default function WeekPage() {
         <WeekGrid
           days={week.days}
           counts={counts}
-          selectedRoles={selectedRoles}          // -> [] when single role; 3 roles when “All”
-          countsByRole={countsByRole}
-          onBlockClick={(blk, roleOverride) => {
-            // Drawer roles: if single role mode, use that; if ALL, use clicked lane role (if provided)
+          onBlockClick={(blk) => {
+            // Which roles should the drawer use?
             const rolesForDrawer =
-              roleMode === "ALL"
-                ? (roleOverride ? [roleOverride] : ["FACILITATOR", "FRONT_DESK", "CLEANER"])
-                : [roleMode];
+              roleMode === "ALL" ? ["FACILITATOR", "FRONT_DESK", "CLEANER"] : [roleMode];
             setDrawerRoles(rolesForDrawer);
-            setDrawerBlock(blk);
+            setDrawerBlock(blk as any); // blk already contains dateISO, startMin, endMin, id
             setDrawerOpen(true);
           }}
         />
       ) : (
-        <div className="surface" style={{ padding: 16 }}>Loading…</div>
+        <div className="surface" style={{ padding: 16 }}>
+          Loading…
+        </div>
       )}
 
       {/* Drawer */}
       <BlockDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        block={drawerBlock}
+        block={
+          drawerBlock
+            ? {
+              id: drawerBlock.id,
+              dateISO: (drawerBlock as any).dateISO,
+              startMin: drawerBlock.startMin,
+              endMin: drawerBlock.endMin,
+            }
+            : undefined
+        }
         monthStr={monthStr}
         selectedRoles={drawerRoles}
       />

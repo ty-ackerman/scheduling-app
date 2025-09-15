@@ -1,61 +1,94 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DateTime } from "luxon";
-import type { WeekGridBlock } from "@/components/WeekGrid";
 
-type UserRow = {
-  id: string;
-  name: string;
-  email: string;
-  roles: string[];
-  location: string; // enum string
-  everyWeek: boolean;
-};
+export type DrawerUser = { id: string; name: string | null; email: string | null };
 
-type BlockDrill = {
-  month: string;
-  blockId: string;
-  users: UserRow[];
+export type DrawerBlock = {
+  id: string;       // DatedBlock.id
+  dateISO: string;
+  startMin: number;
+  endMin: number;
 };
 
 type Props = {
   open: boolean;
   onClose: () => void;
-  block?: WeekGridBlock & { dateISO: string };
-  monthStr: string;
-  selectedRoles: string[]; // filter
+  block?: DrawerBlock;
+  monthStr: string;           // "YYYY-MM"
+  selectedRoles: string[];    // e.g. ["FACILITATOR"] or ["FACILITATOR","CLEANER"]
 };
+
+const fmt = (m: number) =>
+  DateTime.fromObject({ hour: Math.floor(m / 60), minute: m % 60 }).toFormat("h:mm a");
 
 export default function BlockDrawer({ open, onClose, block, monthStr, selectedRoles }: Props) {
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState<UserRow[]>([]);
+  const [users, setUsers] = useState<DrawerUser[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const title = useMemo(() => {
+    if (!block) return "";
+    return `${DateTime.fromISO(block.dateISO).toFormat("ccc MM/dd")} • ${fmt(block.startMin)}–${fmt(block.endMin)}`;
+  }, [block]);
 
   useEffect(() => {
-    let alive = true;
     if (!open || !block) return;
+    let alive = true;
+
     (async () => {
       setLoading(true);
-      const params = new URLSearchParams({ month: monthStr, blockId: block.id });
-      if (selectedRoles.length) params.set("roles", selectedRoles.join(","));
-      const res = await fetch(`/api/availability/block?${params.toString()}`, { cache: "no-store" });
-      const data: BlockDrill = await res.json();
-      if (!alive) return;
-      setRows(data.users || []);
-      setLoading(false);
+      setUsers([]);
+      setError(null);
+
+      try {
+        const url = new URL("/api/manager/available", window.location.origin);
+        url.searchParams.set("datedBlockId", block.id);
+        url.searchParams.set("month", monthStr);
+
+        // pass roles both as single (for legacy) and csv (for new)
+        if (selectedRoles.length === 1) {
+          url.searchParams.set("role", selectedRoles[0]); // legacy
+        }
+        url.searchParams.set("roles", selectedRoles.join(",")); // new
+        url.searchParams.set("debug", "1");
+
+        console.log("[Drawer] FETCH", url.toString());
+        const res = await fetch(url.toString(), { cache: "no-store" });
+        const text = await res.text();
+        let data: any = {};
+        try {
+          data = JSON.parse(text);
+        } catch {
+          console.warn("[Drawer] non-JSON response:", text);
+        }
+        console.log("[Drawer] STATUS", res.status, "DATA", data);
+
+        if (!alive) return;
+
+        if (!res.ok) {
+          setError(data?.error || `HTTP ${res.status}`);
+          return;
+        }
+        setUsers(Array.isArray(data?.users) ? data.users : []);
+      } catch (e) {
+        console.error("[Drawer] fetch error", e);
+        if (alive) setError("Failed to load");
+      } finally {
+        if (alive) setLoading(false);
+      }
     })();
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+    };
   }, [open, block?.id, monthStr, selectedRoles]);
 
   if (!open || !block) return null;
 
-  const label = `${DateTime.fromISO(block.dateISO).toFormat("ccc MM/dd")} • ${fmt(block.startMin)}–${fmt(block.endMin)}`;
-
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="surface"
+    <aside
       style={{
         position: "fixed",
         top: 72,
@@ -63,42 +96,36 @@ export default function BlockDrawer({ open, onClose, block, monthStr, selectedRo
         bottom: 16,
         width: 360,
         padding: 16,
-        zIndex: 60,
-        boxShadow: "0 12px 30px rgba(0,0,0,0.25)",
+        borderRadius: 12,
+        background: "var(--card)",
+        border: "1px solid var(--border)",
+        boxShadow: "0 16px 40px rgba(0,0,0,0.25)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        zIndex: 9999,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 400 }}>{label}</h3>
-        <button className="btn" onClick={onClose}>Close</button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontWeight: 600 }}>{title}</div>
+        <button className="btn btn-quiet" onClick={onClose}>Close</button>
       </div>
 
       {loading ? (
-        <div style={{ color: "var(--muted)" }}>Loading…</div>
-      ) : rows.length === 0 ? (
-        <div style={{ color: "var(--muted)" }}>No one available yet.</div>
+        <div>Loading…</div>
+      ) : error ? (
+        <div style={{ color: "#ef4444" }}>{error}</div>
+      ) : users.length === 0 ? (
+        <div>No one available yet.</div>
       ) : (
-        <div style={{ display: "grid", gap: 8 }}>
-          {rows.map(u => (
-            <div key={u.id} className="surface" style={{ padding: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div style={{ fontSize: 13 }}>{u.name}</div>
-                <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                  {u.roles.join(", ")} • {u.location}
-                </div>
-              </div>
-              {u.everyWeek && (
-                <span className="pill" style={{ fontSize: 10, color: "var(--ok-fg)", borderColor: "color-mix(in oklab, var(--ok-fg) 30%, transparent)" }}>
-                  Every week
-                </span>
-              )}
-            </div>
+        <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 }}>
+          {users.map((u) => (
+            <li key={u.id} className="pill" style={{ fontSize: 13 }}>
+              {u.name ?? u.email ?? "Unnamed"}
+            </li>
           ))}
-        </div>
+        </ul>
       )}
-    </div>
+    </aside>
   );
-}
-
-function fmt(mins: number) {
-  return DateTime.fromObject({ hour: Math.floor(mins / 60), minute: mins % 60 }).toFormat("h:mm a");
 }
